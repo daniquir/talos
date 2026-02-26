@@ -1,0 +1,10 @@
+.custom-scroll::-webkit-scrollbar { width: 2px; }
+.custom-scroll::-webkit-scrollbar-thumb { background: #1a1a1a; }
+.custom-scroll::-webkit-scrollbar-thumb:hover { background: #22c55e; }
+
+body::after {
+    content: " ";
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.05), rgba(0,0,0,0.05) 1px, transparent 1px, transparent 2px);
+    pointer-events: none; z-index: 1000;
+}

@@ -1,0 +1,44 @@
+services:
+  # CAPA 1: La Web (Pública)
+  talos-web:
+    build: ./talos-web
+    container_name: talos_web
+    ports:
+      - "3000:3000"
+    networks:
+      - net_public  # Accesible desde tu navegador
+    restart: always
+
+  # CAPA 2: El Storage (El Puente)
+  talos-storage:
+    build: ./talos-storage
+    container_name: talos_storage
+    environment:
+      - GPG_ID=${GPG_ID:-admin@talos.local}
+    volumes:
+      - ~/.password-store:/home/talosuser/.password-store:rw
+    networks:
+      - net_public  # Para hablar con la web
+      - net_private # Para hablar con el búnker
+    restart: always
+
+  # CAPA 3: El Bunker (Totalmente Aislado)
+  talos-bunker:
+    build: ./talos-bunker
+    container_name: talos_bunker
+    environment:
+      - GPG_ID=${GPG_ID:-admin@talos.local}
+    volumes:
+      - ./keys:/root/.gnupg
+    networks:
+      - net_private # Solo ve al Storage, nadie más lo ve a él
+    restart: always
+
+networks:
+  # Esta red NO lleva 'internal: true', permitiendo el mapeo de puertos
+  net_public:
+    driver: bridge
+
+  # Esta red SÍ es interna. El Búnker está en un agujero negro digital.
+  net_private:
+    internal: true
