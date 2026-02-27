@@ -1,71 +1,28 @@
-use axum::{routing::{get, post}, Json, Router, extract::Path};
-use serde_json::{json, Value};
+mod handlers;
+
+use axum::{routing::{get, post}, Router};
 use tower_http::services::ServeDir;
-use std::net::SocketAddr;
+use std::{env, net::SocketAddr};
+use crate::handlers::{get_version, proxy_list_tree, proxy_decrypt, proxy_save, proxy_delete, proxy_backup, proxy_restore, health_check, proxy_create_category};
 
 #[tokio::main]
 async fn main() {
     let app = Router::new()
-        .route("/api/list/", get(proxy_list_root))
-        .route("/api/list/*path", get(proxy_list))
+        .route("/api/version", get(get_version))
+        .route("/api/tree", get(proxy_list_tree))
         .route("/api/decrypt", post(proxy_decrypt))
         .route("/api/save", post(proxy_save))
+        .route("/api/delete", post(proxy_delete))
+        .route("/api/backup", get(proxy_backup))
+        .route("/api/restore", post(proxy_restore))
+        .route("/api/create_category", post(proxy_create_category))
         .route("/api/health", get(health_check))
         .fallback_service(ServeDir::new("./static"));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string()).parse().unwrap();
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     println!("🚀 TALOS-WEB ONLINE // PORT: {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
-}
-
-async fn health_check() -> Json<Value> {
-    let client = reqwest::Client::new();
-    
-    // Check Storage Bridge
-    let storage_res = client.get("http://talos-storage:4000/api/list/").send().await;
-    
-    // Check Bunker via Storage Proxy (o intento directo de handshake)
-    let bunker_res = client.post("http://talos-bunker:5000/process")
-        .json(&json!({"payload":"", "passphrase":"", "mode":"check"}))
-        .send().await;
-
-    Json(json!({
-        "storage": storage_res.is_ok(),
-        "bunker": bunker_res.is_ok()
-    }))
-}
-
-async fn proxy_list_root() -> Json<Value> {
-    proxy_request("http://talos-storage:4000/api/list/", None).await
-}
-
-async fn proxy_list(Path(path): Path<String>) -> Json<Value> {
-    proxy_request(&format!("http://talos-storage:4000/api/list/{}", path), None).await
-}
-
-async fn proxy_decrypt(Json(body): Json<Value>) -> Json<Value> {
-    proxy_request("http://talos-storage:4000/api/decrypt", Some(body)).await
-}
-
-async fn proxy_save(Json(body): Json<Value>) -> Json<Value> {
-    proxy_request("http://talos-storage:4000/api/save", Some(body)).await
-}
-
-async fn proxy_request(url: &str, body: Option<Value>) -> Json<Value> {
-    let client = reqwest::Client::new();
-    let req = if let Some(b) = body { 
-        client.post(url).json(&b) 
-    } else { 
-        client.get(url) 
-    };
-    
-    match req.send().await {
-        Ok(res) => {
-            let data = res.json::<Value>().await.unwrap_or(json!({"error": "Respuesta inválida del nodo"}));
-            Json(data)
-        },
-        Err(_) => Json(json!({"error": "Nodo inalcanzable"}))
-    }
 }

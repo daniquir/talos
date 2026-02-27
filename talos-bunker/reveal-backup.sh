@@ -2,14 +2,13 @@
 BACKUP_FILE="/root/keys/EMERGENCY_BACKUP.txt"
 
 if [ -f "$BACKUP_FILE" ]; then
-    echo "--- INICIO DE LLAVE PRIVADA DE EMERGENCIA (COPIAR Y GUARDAR) ---"
+    echo "--- BEGIN EMERGENCY PRIVATE KEY (COPY AND SAVE) ---"
     cat "$BACKUP_FILE"
-    echo "--- FIN DE LLAVE ---"
+    echo "--- END OF KEY ---"
     
-    # Autodestrucción segura
     rm -f "$BACKUP_FILE"
-    echo "\n[!] ARCHIVO DE BACKUP ELIMINADO PARA SIEMPRE."
+    echo "\n[!] BACKUP FILE DELETED FOREVER."
 else
-    echo "[X] Error: El backup ya fue reclamado o no existe."
+    echo "[X] Error: Backup already claimed or does not exist."
     exit 1
 fi

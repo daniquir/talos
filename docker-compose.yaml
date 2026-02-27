@@ -1,44 +1,56 @@
 services:
-  # CAPA 1: La Web (Pública)
+  # LAYER 1: The Web (Public)
   talos-web:
     build: ./talos-web
-    container_name: talos_web
+    container_name: talos-web
     ports:
       - "3000:3000"
+    environment:
+      - DEBUG=true
     networks:
-      - net_public  # Accesible desde tu navegador
+      - net_public  # Accessible from your browser
+      - net_middleware # Secure channel to Storage
     restart: always
 
-  # CAPA 2: El Storage (El Puente)
+  # LAYER 2: The Storage (The Bridge)
   talos-storage:
     build: ./talos-storage
-    container_name: talos_storage
+    container_name: talos-storage
     environment:
       - GPG_ID=${GPG_ID:-admin@talos.local}
+      - DEBUG=true
+      # GIT_REPOSITORY is now handled via storage.json
     volumes:
       - ~/.password-store:/home/talosuser/.password-store:rw
+      - ./config:/app/config:ro
+      - ~/.ssh/id_rsa_talos:/run/secrets/id_rsa_talos:ro # Mount your SSH key for Git
     networks:
-      - net_public  # Para hablar con la web
-      - net_private # Para hablar con el búnker
+      - net_middleware # Only accepts requests from Web
+      - net_private    # Exclusive channel to Bunker
     restart: always
 
-  # CAPA 3: El Bunker (Totalmente Aislado)
+  # LAYER 3: The Bunker (Totally Isolated)
   talos-bunker:
     build: ./talos-bunker
-    container_name: talos_bunker
+    container_name: talos-bunker
     environment:
       - GPG_ID=${GPG_ID:-admin@talos.local}
+      - DEBUG=true
     volumes:
       - ./keys:/root/.gnupg
     networks:
-      - net_private # Solo ve al Storage, nadie más lo ve a él
+      - net_private # Only sees Storage, no one else sees it
     restart: always
 
 networks:
-  # Esta red NO lleva 'internal: true', permitiendo el mapeo de puertos
+  # This network does NOT have 'internal: true', allowing port mapping
   net_public:
     driver: bridge
 
-  # Esta red SÍ es interna. El Búnker está en un agujero negro digital.
+  # Isolates Web-Storage communication from outside world
+  net_middleware:
+    internal: true
+
+  # This network IS internal. The Bunker is in a digital black hole.
   net_private:
     internal: true

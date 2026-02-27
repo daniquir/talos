@@ -1,4 +1,4 @@
-# --- Rust & Compilación ---
+# --- Rust & Compilation ---
 **/target/
 **/*.rs.bk
 Cargo.lock
@@ -8,14 +8,14 @@ Cargo.lock
 *.log
 docker-compose.override.yml
 
-# --- Archivos de Sistema / IDE ---
+# --- System Files / IDE ---
 .DS_Store
 .idea/
 .vscode/
 *.swp
 
-# --- Seguridad (¡CRÍTICO!) ---
-# Nunca subas tus llaves o base de datos de contraseñas si están dentro de la carpeta del proyecto
-# Aunque las mapeamos desde el HOME (~/), por si acaso las copias aquí:
+# --- Security (CRITICAL!) ---
+# Never upload your keys or password database if they are inside the project folder
+# Although we map them from HOME (~/), just in case you copy them here:
 .gnupg/
 .password-store/

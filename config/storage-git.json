@@ -1,0 +1,7 @@
+{
+  "backend": {
+    "type": "git",
+    "repository_url": "git@github.com:YOUR_USERNAME/talos-secrets.git",
+    "ssh_key_path": "/run/secrets/id_rsa_talos"
+  }
+}

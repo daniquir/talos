@@ -1,42 +1,45 @@
-# ETAPA 1: Compilación
-FROM rust:1.83-alpine AS builder
+# STAGE 1: Build
+FROM rust:alpine AS builder
 
-# Instalamos dependencias mínimas para enlazar el binario
+# Install minimal dependencies to link the binary
 RUN apk add --no-cache musl-dev
 
 WORKDIR /app
 
-# Copiamos primero los archivos de dependencias para aprovechar la cache de Docker
+# 1. Cacheo de dependencias
+RUN mkdir src && echo "fn main() {}" > src/main.rs
 COPY Cargo.toml ./
-# Si tienes un Cargo.lock, descomenta la siguiente línea:
-# COPY Cargo.lock ./
-
-# Copiamos el código fuente y los archivos estáticos
-COPY src ./src
-COPY static ./static
-
-# Compilamos el binario
 RUN cargo build --release
 
-# ETAPA 2: Ejecución (Imagen Ligera)
+# 2. Compilación del código fuente real
+COPY src ./src
+
+RUN touch src/main.rs
+RUN cargo build --release
+
+# STAGE 2: Runtime (Lightweight Image)
 FROM alpine:latest
 
-# Instalamos librerías necesarias para que reqwest funcione (SSL)
+# Install necessary libraries for reqwest to work (SSL)
 RUN apk add --no-cache ca-certificates libgcc
 
 WORKDIR /app
 
-# Copiamos el binario desde la etapa de compilación
+# Copy binary from build stage
 COPY --from=builder /app/target/release/talos-web /app/talos-web
 
-# Copiamos la carpeta static completa al directorio de trabajo
-COPY --from=builder /app/static /app/static
+# Copiamos los estáticos directamente desde el contexto (más rápido)
+COPY static ./static
 
-# Aseguramos que el binario tiene permisos de ejecución
+# Ensure binary has execution permissions
 RUN chmod +x /app/talos-web
 
-# Exponemos el puerto para documentación (el mapeo real se hace en docker-compose)
+# Expose port for documentation (real mapping is done in docker-compose)
 EXPOSE 3000
 
-# Ejecutamos el binario apuntando a la dirección del puerto
+# Fixed internal configuration
+ENV PORT=3000
+ENV STORAGE_URL=http://talos-storage:4000
+
+# Run binary pointing to port address
 CMD ["./talos-web"]
