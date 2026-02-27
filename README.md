@@ -1,8 +1,8 @@
 # TALOS // VAULT-OS
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/tiopaco/talos/release.yml?style=flat-square)
-![License](https://img.shields.io/github/license/tiopaco/talos?style=flat-square)
-![Version](https://img.shields.io/github/v/release/tiopaco/talos?style=flat-square)
+![Build Status](https://img.shields.io/github/actions/workflow/status/daniquir/talos/release.yml?style=flat-square)
+![License](https://img.shields.io/github/license/daniquir/talos?style=flat-square)
+![Version](https://img.shields.io/github/v/release/daniquir/talos?style=flat-square)
 
 > **Secure Multi-Layered Password Storage System**
 > Written in Rust. Dockerized for isolation.
@@ -148,6 +148,3 @@ The web interface is built with vanilla JavaScript using ES Modules for maintain
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
----
-*Operated by TALOS Systems.*
