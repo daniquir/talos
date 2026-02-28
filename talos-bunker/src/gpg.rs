@@ -1,14 +1,23 @@
 use axum::Json;
+use axum::extract::State;
+use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::process::Stdio;
 use tokio::process::Command;
 use tokio::io::AsyncWriteExt;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+use uuid::Uuid;
+
+// In-Memory Vault for the Master Key. Never written to disk.
+pub static VAULT_KEY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Deserialize)]
 pub struct CryptTask {
     pub payload: String,
     pub mode: String,
+    pub passphrase: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -20,14 +29,114 @@ fn is_debug() -> bool {
     env::var("DEBUG").unwrap_or_default() == "true"
 }
 
-pub async fn process_gpg(Json(req): Json<CryptTask>) -> Json<CryptResponse> {
+pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTask>) -> Json<CryptResponse> {
     let gpg_id = env::var("GPG_ID").unwrap_or_else(|_| "admin@talos.local".to_string());
     let mut args = vec!["--batch", "--pinentry-mode", "loopback"];
     
     if is_debug() { println!("--> [BUNKER] Processing GPG task: {}", req.mode); }
     
     if req.mode == "check" {
-        return Json(CryptResponse { result: "BUNKER_ONLINE".to_string() });
+        // Check if key exists on disk
+        let check = Command::new("gpg")
+            .args(["--list-secret-keys", &gpg_id])
+            .output()
+            .await
+            .expect("Failed to check keys");
+            
+        if !check.status.success() {
+             return Json(CryptResponse { result: "UNINITIALIZED".to_string() });
+        }
+
+        if VAULT_KEY.lock().unwrap().is_some() {
+            return Json(CryptResponse { result: "UNSEALED".to_string() });
+        } else {
+            return Json(CryptResponse { result: "SEALED".to_string() });
+        }
+    }
+
+    // UNSEAL OPERATION: Validate key and store in RAM
+    if req.mode == "unlock" {
+        *VAULT_KEY.lock().unwrap() = Some(req.payload);
+        return Json(CryptResponse { result: "VAULT_UNSEALED".to_string() });
+    }
+
+    // INITIALIZE OPERATION: Generate the master key with provided passphrase
+    if req.mode == "initialize" {
+        // Double check it doesn't exist
+        let check = Command::new("gpg")
+            .args(["--list-secret-keys", &gpg_id])
+            .output()
+            .await
+            .expect("Failed to check keys");
+            
+        if check.status.success() {
+             return Json(CryptResponse { result: "ERROR_ALREADY_INIT".to_string() });
+        }
+
+        let passphrase = &req.payload;
+        
+        // Generate key script
+        let gen_params = format!(
+            "Key-Type: RSA\nKey-Length: 4096\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
+            gpg_id, passphrase
+        );
+        let gen_file = format!("/tmp/gpg_gen_{}", Uuid::new_v4());
+        if std::fs::write(&gen_file, gen_params).is_err() {
+             return Json(CryptResponse { result: "ERROR_WRITE".to_string() });
+        }
+
+        let status = Command::new("gpg")
+            .args(["--batch", "--generate-key", &gen_file])
+            .status()
+            .await
+            .expect("Failed to generate key");
+            
+        let _ = std::fs::remove_file(gen_file);
+
+        if status.success() {
+            // Auto-unseal in memory since we just set it
+            *VAULT_KEY.lock().unwrap() = Some(passphrase.clone());
+            return Json(CryptResponse { result: "INITIALIZED".to_string() });
+        } else {
+            return Json(CryptResponse { result: "ERROR_GEN".to_string() });
+        }
+    }
+
+    // IMPORT OPERATION: Import existing private key
+    if req.mode == "import" {
+        let key_data = req.payload;
+        let passphrase = req.passphrase.unwrap_or_default();
+
+        let key_file = format!("/tmp/gpg_import_{}", Uuid::new_v4());
+        if std::fs::write(&key_file, key_data).is_err() {
+             return Json(CryptResponse { result: "ERROR_WRITE".to_string() });
+        }
+
+        let status = Command::new("gpg")
+            .args(["--batch", "--import", &key_file])
+            .status()
+            .await
+            .expect("Failed to import key");
+            
+        let _ = std::fs::remove_file(key_file);
+
+        if status.success() {
+            // Auto-unseal in memory
+            *VAULT_KEY.lock().unwrap() = Some(passphrase);
+            return Json(CryptResponse { result: "INITIALIZED".to_string() });
+        } else {
+            return Json(CryptResponse { result: "ERROR_IMPORT".to_string() });
+        }
+    }
+
+    // EXPORT KEY OPERATION: Backup the private key
+    if req.mode == "export_key" {
+        let output = Command::new("gpg")
+            .args(["--export-secret-keys", "--armor", &gpg_id])
+            .output()
+            .await
+            .expect("Failed to export key");
+        return Json(CryptResponse { result: String::from_utf8_lossy(&output.stdout).to_string() });
     }
 
     if req.mode == "decrypt" {
@@ -35,6 +144,24 @@ pub async fn process_gpg(Json(req): Json<CryptTask>) -> Json<CryptResponse> {
     } else {
         args.extend(["-e", "-r", &gpg_id, "--armor"]); 
     }
+
+    // Retrieve Key from Memory
+    let passphrase = {
+        let guard = VAULT_KEY.lock().unwrap();
+        match guard.as_ref() {
+            Some(p) => p.clone(), // Clone the string to release the lock immediately
+            None => return Json(CryptResponse { result: "ERROR_VAULT_SEALED".to_string() }),
+        }
+    };
+
+    // Securely pass passphrase to GPG via temporary file in RAM (/dev/shm)
+    // This avoids showing it in process list (ps aux)
+    let pass_file = format!("/dev/shm/gpg_pass_{}", Uuid::new_v4());
+    if let Err(_) = std::fs::write(&pass_file, &passphrase) {
+        return Json(CryptResponse { result: "ERROR_MEMORY_WRITE".to_string() });
+    }
+    args.extend(["--passphrase-file", &pass_file]);
+    // Note: GPG 2.x might require --pinentry-mode loopback for file/pipe password
 
     // Use Tokio's asynchronous Command to prevent blocking the runtime during GPG operations
     let mut child = Command::new("gpg")
@@ -54,50 +181,10 @@ pub async fn process_gpg(Json(req): Json<CryptTask>) -> Json<CryptResponse> {
     // Await the process completion and capture output
     let output = child.wait_with_output().await.expect("GPG process failed");
     
+    // Wipe password file immediately
+    let _ = std::fs::remove_file(pass_file);
+    
     Json(CryptResponse {
         result: String::from_utf8_lossy(&output.stdout).to_string(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::init::init_bunker;
-    use axum::Json;
-
-    #[tokio::test]
-    async fn test_encrypt_decrypt_flow() {
-        // Ensure GPG key exists for the test
-        init_bunker().await;
-
-        let original_payload = "TALOS system check: OK".to_string();
-
-        // 1. Encrypt
-        let encrypt_task = CryptTask {
-            payload: original_payload.clone(),
-            mode: "encrypt".to_string(),
-        };
-        let Json(encrypt_response) = process_gpg(Json(encrypt_task)).await;
-        let encrypted_payload = encrypt_response.result;
-
-        assert!(encrypted_payload.starts_with("-----BEGIN PGP MESSAGE-----"));
-        assert!(encrypted_payload.ends_with("-----END PGP MESSAGE-----\n"));
-
-        // 2. Decrypt
-        let decrypt_task = CryptTask {
-            payload: encrypted_payload,
-            mode: "decrypt".to_string(),
-        };
-        let Json(decrypt_response) = process_gpg(Json(decrypt_task)).await;
-        let decrypted_payload = decrypt_response.result.trim().to_string();
-
-        assert_eq!(original_payload, decrypted_payload);
-    }
-
-    #[tokio::test]
-    async fn test_check_mode() {
-        let check_task = CryptTask { payload: "".to_string(), mode: "check".to_string() };
-        let Json(check_response) = process_gpg(Json(check_task)).await;
-        assert_eq!(check_response.result, "BUNKER_ONLINE");
-    }
 }

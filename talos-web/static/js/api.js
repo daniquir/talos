@@ -1,6 +1,7 @@
 export const API = {
     async fetchTree() {
         const res = await fetch(`/api/tree`);
+        if (!res.ok) throw new Error(res.statusText);
         return await res.json();
     },
 
@@ -79,5 +80,57 @@ export const API = {
     async fetchVersion() {
         const res = await fetch('/api/version');
         return await res.json();
+    },
+
+    async fetchAuthStatus() {
+        const res = await fetch('/api/auth/status');
+        return await res.json();
+    },
+
+    async fetchAuditLogs() {
+        const res = await fetch('/api/audit');
+        return await res.json();
+    },
+
+    async initializeSystem(masterKey) {
+        const res = await fetch('/api/initialize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: masterKey })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Initialization failed');
+        }
+    },
+
+    async importSystem(privateKey, passphrase) {
+        const res = await fetch('/api/initialize/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: privateKey, passphrase })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Import failed');
+        }
+    },
+
+    async login(masterKey) {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: masterKey })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Login failed');
+        }
+    },
+
+    async logout() {
+        await fetch('/api/auth/logout', {
+            method: 'POST'
+        });
     }
 };

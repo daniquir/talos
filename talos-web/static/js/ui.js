@@ -14,19 +14,91 @@ export const UI = {
             form: document.getElementById('encrypt-form'),
             statusStorage: document.getElementById('status-storage'),
             statusBunker: document.getElementById('status-bunker'),
+            // Auth Indicator
+            authIndicator: document.getElementById('auth-indicator'),
+            authIcon: document.getElementById('auth-icon'),
+            authText: document.getElementById('auth-text'),
             entryPath: document.getElementById('entry-path'),
             entryOriginalPath: document.getElementById('entry-original-path'),
             entryUser: document.getElementById('entry-user'),
             entrySecret: document.getElementById('entry-secret'),
             entryUrl: document.getElementById('entry-url'),
             entryDesc: document.getElementById('entry-desc'),
+            btnEntryGen: document.getElementById('btn-entry-gen'),
+            entryGenLength: document.getElementById('entry-gen-length'),
+            entryGenLenVal: document.getElementById('entry-gen-len-val'),
+            entryGenUpper: document.getElementById('entry-gen-upper'),
+            entryGenNums: document.getElementById('entry-gen-nums'),
+            entryGenSyms: document.getElementById('entry-gen-syms'),
             systemFreeze: document.getElementById('system-freeze'),
             btnReconnect: document.getElementById('btn-reconnect'),
+            // Setup Elements
+            setupModal: document.getElementById('setup-modal'),
+            setupForm: document.getElementById('setup-form'),
+            setupKey: document.getElementById('setup-key'),
+            btnSetupGen: document.getElementById('btn-setup-gen'),
+            setupGenLength: document.getElementById('setup-gen-length'),
+            setupGenLenVal: document.getElementById('setup-gen-len-val'),
+            setupGenUpper: document.getElementById('setup-gen-upper'),
+            setupGenNums: document.getElementById('setup-gen-nums'),
+            setupGenSyms: document.getElementById('setup-gen-syms'),
+            importForm: document.getElementById('import-form'),
+            importKey: document.getElementById('import-key'),
+            importPassphrase: document.getElementById('import-passphrase'),
+            tabGenerate: document.getElementById('tab-generate'),
+            tabImport: document.getElementById('tab-import'),
+            // Settings Elements
+            settingsModal: document.getElementById('settings-modal'),
+            btnCloseSettings: document.getElementById('btn-close-settings'),
+            // Audit Elements
+            auditModal: document.getElementById('audit-modal'),
+            auditTableBody: document.getElementById('audit-table-body'),
+            btnCloseAudit: document.getElementById('btn-close-audit'),
+            // Login Elements
+            loginModal: document.getElementById('login-modal'),
+            loginForm: document.getElementById('login-form'),
+            loginKey: document.getElementById('login-key'),
+            notificationArea: document.getElementById('notification-area'),
         };
     },
 
     openModal() { this.elements.modal.classList.remove('hidden'); },
     closeModal() { this.elements.modal.classList.add('hidden'); },
+
+    openSetupModal() { this.elements.setupModal.classList.remove('hidden'); },
+    closeSetupModal() { this.elements.setupModal.classList.add('hidden'); },
+
+    openSettingsModal() { this.elements.settingsModal.classList.remove('hidden'); },
+    closeSettingsModal() { this.elements.settingsModal.classList.add('hidden'); },
+
+    openAuditModal() { this.elements.auditModal.classList.remove('hidden'); },
+    closeAuditModal() { this.elements.auditModal.classList.add('hidden'); },
+
+    openLoginModal() { this.elements.loginModal.classList.remove('hidden'); },
+    closeLoginModal() { this.elements.loginModal.classList.add('hidden'); },
+
+    showNotification(message, type = 'info') {
+        const notif = document.createElement('div');
+        let colors = 'border-zinc-500 text-zinc-300 shadow-[0_0_10px_rgba(113,113,122,0.3)]';
+        if (type === 'success') colors = 'border-green-500 text-green-500 shadow-[0_0_10px_rgba(34,197,94,0.3)]';
+        if (type === 'error') colors = 'border-red-500 text-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]';
+
+        notif.className = `bg-black border p-4 text-xs font-mono uppercase tracking-wider transition-all duration-500 transform translate-x-full opacity-0 ${colors} pointer-events-auto`;
+        notif.innerText = message;
+
+        this.elements.notificationArea.appendChild(notif);
+
+        // Animate in
+        requestAnimationFrame(() => {
+            notif.classList.remove('translate-x-full', 'opacity-0');
+        });
+
+        // Remove after 3s
+        setTimeout(() => {
+            notif.classList.add('translate-x-full', 'opacity-0');
+            setTimeout(() => notif.remove(), 500);
+        }, 3000);
+    },
 
     updateHealth(status) {
         const updateIndicator = (el, ok) => {
@@ -34,6 +106,23 @@ export const UI = {
         };
         updateIndicator(this.elements.statusStorage, status.storage);
         updateIndicator(this.elements.statusBunker, status.bunker);
+    },
+
+    setAuthMethod(method) {
+        this.elements.authIndicator.classList.remove('hidden');
+        if (method === 'mtls') {
+            this.elements.authIcon.setAttribute('data-lucide', 'award');
+            this.elements.authIcon.classList.replace('text-zinc-500', 'text-yellow-500');
+            this.elements.authText.innerText = 'DIPLOMATIC';
+            this.elements.authText.classList.replace('text-zinc-500', 'text-yellow-500');
+        } else {
+            this.elements.authIcon.setAttribute('data-lucide', 'key');
+            this.elements.authIcon.classList.replace('text-green-500', 'text-zinc-500');
+            this.elements.authText.innerText = 'MASTER KEY';
+            this.elements.authText.classList.replace('text-green-500', 'text-zinc-500');
+        }
+        // @ts-ignore
+        lucide.createIcons();
     },
 
     setFreezeState(frozen) {
@@ -146,10 +235,21 @@ export const UI = {
         };
     },
 
-    generatePassword() {
-        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+";
-        const pass = Array.from({length: 24}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-        this.elements.entrySecret.value = pass;
+    generatePassword(length = 24, useUpper = true, useNumbers = true, useSymbols = true) {
+        const lower = "abcdefghijklmnopqrstuvwxyz";
+        const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const nums = "0123456789";
+        const syms = "!@#$%^&*()_+~`|}{[]:;?><,./-=";
+
+        let chars = lower;
+        if (useUpper) chars += upper;
+        if (useNumbers) chars += nums;
+        if (useSymbols) chars += syms;
+
+        // Fallback if nothing selected
+        if (chars === "") chars = lower;
+
+        return Array.from({length}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
     },
 
     clearForm() {
@@ -163,7 +263,6 @@ export const UI = {
 
         // 1. Parse data
         const lines = text.split('\n');
-        const isHidden = lines[0] === '__TALOS_HIDDEN_SECRET__';
         const name = path.split('/').pop();
         let user = '', url = '', description = [];
 
@@ -271,5 +370,29 @@ export const UI = {
 
         // @ts-ignore
         lucide.createIcons();
+    },
+
+    renderAuditLogs(logs) {
+        this.elements.auditTableBody.innerHTML = '';
+        logs.forEach(log => {
+            const row = document.createElement('tr');
+            row.className = 'border-b border-zinc-900/50 hover:bg-zinc-900/30 transition-colors';
+
+            let actionColor = 'text-zinc-300';
+            if (log.action.includes('SUCCESS') || log.action.includes('SAVE') || log.action.includes('BACKUP')) actionColor = 'text-green-400';
+            if (log.action.includes('FAILURE') || log.action.includes('DELETE')) actionColor = 'text-red-400';
+            if (log.action.includes('DECRYPT')) actionColor = 'text-blue-400';
+            if (log.action.includes('LOGOUT')) actionColor = 'text-yellow-500';
+
+            row.innerHTML = `
+                <td class="py-2 text-zinc-500 text-xs">${new Date(log.timestamp + 'Z').toLocaleString()}</td>
+                <td class="py-2 font-bold ${actionColor}">${log.action}</td>
+                <td class="py-2 text-zinc-300">${log.target}</td>
+                <td class="py-2 text-zinc-400">${log.ip_address || '-'}</td>
+                <td class="py-2 text-zinc-500 text-xs truncate max-w-xs" title="${log.user_agent || ''}">${log.user_agent || '-'}</td>
+                <td class="py-2 text-zinc-400">${log.auth_method || 'system'}</td>
+            `;
+            this.elements.auditTableBody.appendChild(row);
+        });
     }
 };

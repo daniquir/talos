@@ -2,6 +2,9 @@ import { API } from './api.js';
 import { UI } from './ui.js';
 
 const App = {
+    sessionTimeout: 900, // 15 minutes in seconds
+    sessionTimer: null,
+
     async init() {
         UI.init();
         // Initialize Lucide icons (ignoring TS warning for global library)
@@ -12,6 +15,9 @@ const App = {
         this.verifySystemStatus();
         this.fetchAndDisplayVersion();
 
+        // Check Authentication Status (Genesis Protocol)
+        await this.checkAuthStatus();
+
         // Initialize Event Listeners for UI interactions
         UI.elements.form.onsubmit = (e) => this.handleSave(e);
         document.getElementById('btn-new-secret').onclick = () => this.handleNewSecret();
@@ -19,9 +25,44 @@ const App = {
         document.getElementById('btn-backup').onclick = () => window.location.href = '/api/backup';
         document.getElementById('btn-restore').onclick = () => document.getElementById('file-restore').click();
         document.getElementById('file-restore').onchange = (e) => this.handleRestore(e);
-        document.getElementById('btn-gen-pass').onclick = () => UI.generatePassword();
+        document.getElementById('btn-logout').onclick = async () => {
+            await API.logout();
+            window.location.reload();
+        };
+
+        // Audit Logs
+        document.getElementById('btn-audit').onclick = async () => {
+            try {
+                const logs = await API.fetchAuditLogs(); // This now goes to /api/audit
+                UI.renderAuditLogs(logs);
+                UI.openAuditModal();
+            } catch (e) { UI.showNotification("Failed to fetch logs", "error"); }
+        };
+        UI.elements.btnCloseAudit.onclick = () => UI.closeAuditModal();
+        
+        // Settings & WebAuthn
+        document.getElementById('btn-settings').onclick = () => UI.openSettingsModal();
+        UI.elements.btnCloseSettings.onclick = () => UI.closeSettingsModal();
+
+        // Entry Generator Logic
+        const runEntryGen = () => {
+            const len = parseInt(UI.elements.entryGenLength.value);
+            const upper = UI.elements.entryGenUpper.checked;
+            const nums = UI.elements.entryGenNums.checked;
+            const syms = UI.elements.entryGenSyms.checked;
+            UI.elements.entrySecret.value = UI.generatePassword(len, upper, nums, syms);
+        };
+        UI.elements.entryGenLength.oninput = (e) => { UI.elements.entryGenLenVal.innerText = e.target.value; runEntryGen(); };
+        UI.elements.entryGenUpper.onchange = runEntryGen;
+        UI.elements.entryGenNums.onchange = runEntryGen;
+        UI.elements.entryGenSyms.onchange = runEntryGen;
+        UI.elements.btnEntryGen.onclick = runEntryGen;
+
         document.getElementById('btn-new-category').onclick = () => this.handleNewCategory();
-        UI.elements.btnReconnect.onclick = () => this.verifySystemStatus();
+        UI.elements.btnReconnect.onclick = async () => {
+            const healthy = await this.verifySystemStatus();
+            if (healthy) this.loadFiles();
+        };
 
         UI.elements.treeSearch.addEventListener('input', (e) => {
             const searchTerm = e.target.value;
@@ -52,6 +93,157 @@ const App = {
         });
     },
 
+    async checkAuthStatus() {
+        try {
+            const status = await API.fetchAuthStatus();
+            if (!status.initialized) {
+                this.initSetupMode();
+            } else if (!status.authenticated) {
+                this.initLoginMode();
+            } else {
+                // Authenticated: Show method
+                UI.setAuthMethod(status.auth_method);
+                this.startSessionTimer();
+                this.loadFiles();
+            }
+        } catch (e) {
+            console.error("Auth check failed", e);
+        }
+    },
+
+    startSessionTimer() {
+        const timerEl = document.getElementById('session-timer');
+        const valEl = document.getElementById('timer-val');
+        if(timerEl) timerEl.classList.remove('hidden');
+
+        let timeLeft = this.sessionTimeout;
+
+        const updateDisplay = () => {
+            const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+            const s = (timeLeft % 60).toString().padStart(2, '0');
+            if(valEl) valEl.innerText = `${m}:${s}`;
+            
+            if (timeLeft <= 0) {
+                API.logout().then(() => window.location.reload());
+            }
+            timeLeft--;
+        };
+
+        const resetTimer = () => { timeLeft = this.sessionTimeout; };
+
+        // Reset on activity
+        window.addEventListener('mousemove', resetTimer);
+        window.addEventListener('keydown', resetTimer);
+        window.addEventListener('click', resetTimer);
+
+        updateDisplay();
+        this.sessionTimer = setInterval(updateDisplay, 1000);
+    },
+
+    initSetupMode() {
+        UI.openSetupModal();
+        
+        // Setup Generator Logic
+        const runGen = () => {
+            const len = parseInt(UI.elements.setupGenLength.value);
+            const upper = UI.elements.setupGenUpper.checked;
+            const nums = UI.elements.setupGenNums.checked;
+            const syms = UI.elements.setupGenSyms.checked;
+            UI.elements.setupKey.value = UI.generatePassword(len, upper, nums, syms);
+        };
+ 
+        // --- Auto-generation on parameter change ---
+        UI.elements.setupGenLength.oninput = (e) => { 
+            UI.elements.setupGenLenVal.innerText = e.target.value; 
+            runGen();
+        };
+        UI.elements.setupGenUpper.onchange = runGen;
+        UI.elements.setupGenNums.onchange = runGen;
+        UI.elements.setupGenSyms.onchange = runGen;
+        UI.elements.btnSetupGen.onclick = runGen;
+        
+        // Initial generation
+        runGen();
+
+        // --- Tab Switching ---
+        UI.elements.tabGenerate.onclick = () => {
+            UI.elements.setupForm.classList.remove('hidden');
+            UI.elements.importForm.classList.add('hidden');
+            UI.elements.tabGenerate.className = 'flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-green-500 text-white';
+            UI.elements.tabImport.className = 'flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-transparent text-zinc-500 hover:text-white';
+        };
+        UI.elements.tabImport.onclick = () => {
+            UI.elements.setupForm.classList.add('hidden');
+            UI.elements.importForm.classList.remove('hidden');
+            UI.elements.tabImport.className = 'flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-blue-500 text-white';
+            UI.elements.tabGenerate.className = 'flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-transparent text-zinc-500 hover:text-white';
+        };
+
+        // --- Form Submissions ---
+        UI.elements.setupForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = UI.elements.setupForm.querySelector('button[type="submit"]');
+            const key = UI.elements.setupKey.value;
+            
+            // Disable UI to prevent double submission
+            btn.disabled = true;
+            btn.innerText = "INITIALIZING...";
+
+            // Auto-copy to clipboard
+            try {
+                await navigator.clipboard.writeText(key);
+                UI.showNotification("KEY COPIED TO CLIPBOARD", "success");
+            } catch (c) { console.error(c); }
+
+            try {
+                await API.initializeSystem(key);
+                UI.showNotification("SYSTEM INITIALIZED. RELOADING...", "success");
+                setTimeout(() => window.location.reload(), 2000);
+            } catch (err) {
+                UI.showNotification("INITIALIZATION FAILED: " + err.message, "error");
+                btn.disabled = false;
+                btn.innerText = "INITIALIZE SYSTEM";
+            }
+        };
+
+        UI.elements.importForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = UI.elements.importForm.querySelector('button[type="submit"]');
+            const privateKey = UI.elements.importKey.value;
+            const passphrase = UI.elements.importPassphrase.value;
+            if (!privateKey) {
+                UI.showNotification("Please provide the GPG private key.", "error");
+                return;
+            }
+            btn.disabled = true;
+            btn.innerText = "IMPORTING...";
+            try {
+                await API.importSystem(privateKey, passphrase);
+                UI.showNotification("SYSTEM IMPORTED. RELOADING...", "success");
+                setTimeout(() => window.location.reload(), 2000);
+            } catch (err) {
+                UI.showNotification("IMPORT FAILED: " + err.message, "error");
+                btn.disabled = false;
+                btn.innerText = "IMPORT KEY & INITIALIZE";
+            }
+        };
+    },
+
+    initLoginMode() {
+        UI.openLoginModal();
+        UI.elements.loginForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const key = UI.elements.loginKey.value;
+            try {
+                await API.login(key);
+                window.location.reload();
+            } catch (err) {
+                UI.showNotification("ACCESS DENIED", "error");
+                UI.elements.loginKey.value = '';
+            }
+        };
+    },
+
     // Wrapper to ensure system is healthy before any action
     async executeSafe(action) {
         const isHealthy = await this.verifySystemStatus();
@@ -67,9 +259,6 @@ const App = {
         const isHealthy = status.storage && status.bunker;
         UI.setFreezeState(!isHealthy);
         
-        if (isHealthy && UI.elements.treeContainer.is(':empty')) {
-             this.loadFiles();
-        }
         return isHealthy;
     },
 
@@ -86,8 +275,12 @@ const App = {
     },
 
     async loadFiles() {
-        const tree = await API.fetchTree();
-        UI.renderTree(tree, (node) => this.getContextMenuItems(node));
+        try {
+            const tree = await API.fetchTree();
+            UI.renderTree(tree, (node) => this.getContextMenuItems(node));
+        } catch (e) {
+            console.warn("Tree load skipped:", e.message);
+        }
     },
 
     getContextMenuItems(node) {
@@ -146,7 +339,7 @@ const App = {
                 UI.renderSecretView(path, content);
                 UI.elements.header.innerText = `OPEN: ${path}`;
             } catch (err) {
-                alert("ERROR: " + err.message);
+                UI.showNotification("ERROR: " + err.message, "error");
                 UI.elements.header.innerText = "ERROR";
             }
         });
@@ -171,7 +364,7 @@ const App = {
                 }
             } catch (err) {
                 console.error(err);
-                alert("Failed to copy password: " + err.message);
+                UI.showNotification("Failed to copy password: " + err.message, "error");
             }
         });
     },
@@ -182,7 +375,7 @@ const App = {
             try {
                 const { path, content, original_path } = UI.getFormData();
                 if (!path || path.endsWith('/')) {
-                    alert("ERROR: A name for the secret is required.");
+                    UI.showNotification("ERROR: A name for the secret is required.", "error");
                     return;
                 }
 
@@ -190,7 +383,7 @@ const App = {
                 UI.closeModal();
                 this.loadFiles();
             } catch (err) {
-                alert("ERROR SAVING: " + err.message);
+                UI.showNotification("ERROR SAVING: " + err.message, "error");
             }
         });
     },
@@ -202,7 +395,7 @@ const App = {
             UI.elements.viewer.innerText = '';
             this.loadFiles();
         } catch (err) {
-            alert("ERROR DELETING: " + err.message);
+            UI.showNotification("ERROR DELETING: " + err.message, "error");
         }
     },
 
@@ -214,10 +407,10 @@ const App = {
             if (confirm("WARNING: This will overwrite existing secrets. Continue?")) {
                 try {
                     await API.restore(file);
-                    alert("Restored successfully!");
+                    UI.showNotification("Restored successfully!", "success");
                     this.loadFiles();
                 } catch (err) {
-                    alert("ERROR RESTORING: " + err.message);
+                    UI.showNotification("ERROR RESTORING: " + err.message, "error");
                 }
             }
             e.target.value = ''; // reset input
@@ -237,7 +430,7 @@ const App = {
                     await API.createCategory(finalPath);
                     this.loadFiles();
                 } catch (err) {
-                    alert("ERROR CREATING CATEGORY: " + err.message);
+                    UI.showNotification("ERROR CREATING CATEGORY: " + err.message, "error");
                 }
             }
         });

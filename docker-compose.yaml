@@ -5,8 +5,12 @@ services:
     container_name: talos-web
     ports:
       - "3000:3000"
+      - "3443:3443"
     environment:
       - DEBUG=true
+      - DATABASE_URL=sqlite:/data/talos.db
+    volumes:
+      - ./data/web:/data
     networks:
       - net_public  # Accessible from your browser
       - net_middleware # Secure channel to Storage
@@ -19,11 +23,10 @@ services:
     environment:
       - GPG_ID=${GPG_ID:-admin@talos.local}
       - DEBUG=true
-      # GIT_REPOSITORY is now handled via storage.json
     volumes:
-      - ~/.password-store:/home/talosuser/.password-store:rw
+      - ./data/password-store:/home/talosuser/.password-store:rw
       - ./config:/app/config:ro
-      - ~/.ssh/id_rsa_talos:/run/secrets/id_rsa_talos:ro # Mount your SSH key for Git
+      - ./data/ssh/id_rsa_talos:/run/secrets/id_rsa_talos:ro # Mount your SSH key for Git
     networks:
       - net_middleware # Only accepts requests from Web
       - net_private    # Exclusive channel to Bunker
@@ -36,8 +39,6 @@ services:
     environment:
       - GPG_ID=${GPG_ID:-admin@talos.local}
       - DEBUG=true
-    volumes:
-      - ./keys:/root/.gnupg
     networks:
       - net_private # Only sees Storage, no one else sees it
     restart: always

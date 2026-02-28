@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
-pub struct PassEntry { pub name: String, pub is_dir: bool }
-
 #[derive(Deserialize)]
 pub struct ActionRequest {
     pub path: String,

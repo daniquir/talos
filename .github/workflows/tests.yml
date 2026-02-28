@@ -1,0 +1,48 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          # libsqlite3-dev: Para talos-web (base de datos)
+          # libssl-dev: Para reqwest (comunicación segura)
+          # gnupg: Para talos-bunker (motor de cifrado)
+          sudo apt-get install -y libsqlite3-dev libssl-dev pkg-config gnupg
+
+      - name: Test talos-web
+        working-directory: ./talos-web
+        env:
+          DATABASE_URL: "sqlite::memory:" # Usamos memoria para tests si es necesario
+        run: |
+          cargo check --verbose
+          cargo test --verbose
+
+      - name: Test talos-storage
+        working-directory: ./talos-storage
+        run: |
+          cargo test --verbose
+
+      - name: Test talos-bunker
+        working-directory: ./talos-bunker
+        run: |
+          cargo test --verbose

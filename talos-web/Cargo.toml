@@ -1,12 +1,20 @@
 [package]
 name = "talos-web"
 version = "1.0.0"
-edition = "2021"
+edition = "2024"
+license = "MIT"
 
 [dependencies]
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.7", features = ["multipart", "macros"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "multipart"] }
-tower-http = { version = "0.5", features = ["fs"] }
+tower-http = { version = "0.5", features = ["fs", "compression-gzip", "set-header", "trace"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "macros"] }
+argon2 = "0.5"
+tower-sessions = "0.12.3"
+url = "2.5"
+zip = "0.6"
+zeroize = { version = "1.7", features = ["derive"] }
+time = "0.3"

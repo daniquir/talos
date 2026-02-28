@@ -2,12 +2,12 @@ FROM rust:alpine AS builder
 RUN apk add --no-cache musl-dev
 WORKDIR /app
 
-# 1. Creamos un proyecto vacío para cachear las dependencias
+# 1. Create an empty project to cache dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 COPY Cargo.toml ./
 RUN cargo build --release
 
-# 2. Copiamos el código real y forzamos la recompilación solo del binario
+# 2. Copy the actual code and force recompilation of only the binary
 COPY src ./src
 RUN touch src/main.rs
 RUN cargo build --release

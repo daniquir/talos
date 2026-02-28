@@ -17,5 +17,14 @@ docker-compose.override.yml
 # --- Security (CRITICAL!) ---
 # Never upload your keys or password database if they are inside the project folder
 # Although we map them from HOME (~/), just in case you copy them here:
-.gnupg/
-.password-store/
+**/.gnupg/
+**/.password-store/
+**/keys/
+**/certs/
+**/config/
+**/data/
+
+# --- Database ---
+*.db
+*.db-shm
+*.db-wal

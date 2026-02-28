@@ -9,7 +9,7 @@ use std::fs;
 use talos_storage::{
     config::STORE_PATH,
     handlers::{
-        create_category, delete_entry, decrypt_secret, encrypt_and_save, list_tree, TreeNode,
+        create_category, delete_entry, decrypt_secret, encrypt_and_save, list_tree, TreeNode, unlock_bunker
     },
     init::init_storage,
 };
@@ -39,7 +39,8 @@ async fn setup_test_env() -> (Router, MockServer) {
         .route("/api/decrypt", axum::routing::post(decrypt_secret))
         .route("/api/save", axum::routing::post(encrypt_and_save))
         .route("/api/delete", axum::routing::post(delete_entry))
-        .route("/api/create_category", axum::routing::post(create_category));
+        .route("/api/create_category", axum::routing::post(create_category))
+        .route("/api/unlock", axum::routing::post(unlock_bunker));
 
     (app, bunker_mock)
 }
@@ -190,4 +191,58 @@ async fn test_full_secret_lifecycle() {
     assert!(!std::path::Path::new(&*STORE_PATH)
         .join(format!("{}.gpg", secret_path))
         .exists());
+}
+
+#[tokio::test]
+async fn test_unlock_bunker_flow() {
+    let (app, bunker) = setup_test_env().await;
+
+    // 1. Mock Unlock request
+    Mock::given(method("POST"))
+        .and(path("/process"))
+        .and(wiremock::matchers::body_json(json!({
+            "payload": "my_master_key",
+            "mode": "unlock"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "VAULT_UNSEALED"})))
+        .mount(&bunker)
+        .await;
+
+    // 2. Mock Canary Encryption (Verification step)
+    Mock::given(method("POST"))
+        .and(path("/process"))
+        .and(wiremock::matchers::body_json(json!({
+            "payload": "TALOS_VERIFY_SEQ",
+            "mode": "encrypt"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "ENCRYPTED_CANARY"})))
+        .mount(&bunker)
+        .await;
+
+    // 3. Mock Canary Decryption (Verification step)
+    Mock::given(method("POST"))
+        .and(path("/process"))
+        .and(wiremock::matchers::body_json(json!({
+            "payload": "ENCRYPTED_CANARY",
+            "mode": "decrypt"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "TALOS_VERIFY_SEQ"})))
+        .mount(&bunker)
+        .await;
+
+    // 4. Perform Unlock
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/unlock")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"key": "my_master_key"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }

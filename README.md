@@ -1,22 +1,24 @@
 # TALOS // VAULT-OS
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/daniquir/talos/release.yml?style=flat-square)
-![License](https://img.shields.io/github/license/daniquir/talos?style=flat-square)
-![Version](https://img.shields.io/github/v/release/daniquir/talos?style=flat-square)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/daniquir/talos/release.yml?style=flat-square)](https://github.com/daniquir/talos/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/daniquir/talos?style=flat-square)](https://github.com/daniquir/talos/releases)
 
 > **Secure Multi-Layered Password Storage System**
-> Written in Rust. Dockerized for isolation.
+> A self-hosted, GPG-based secret manager with a 3-layer isolated architecture, written in Rust and Dockerized for security.
 
 ## ✨ Features
 
 *   **Military-Grade Architecture**: 3-layer isolation (Web -> Storage -> Bunker).
 *   **Secure Storage**: GPG encryption with RSA 4096-bit keys.
+*   **True Master Key**: The Bunker is sealed at rest. The master key exists only in RAM.
 *   **Tree View Navigation**: Hierarchical organization of secrets with categories.
 *   **Lazy Loading & Masking**: Secrets are masked by default and only retrieved from the Bunker upon explicit request.
 *   **Search & Filter**: Real-time filtering of the secret tree.
 *   **Backup & Restore**: Download full encrypted backups as ZIP files and restore them easily.
 *   **Git Integration**: Optional automatic versioning and remote backup to a Git repository.
 *   **Digital Freeze Mode**: System automatically locks down UI if connection to secure nodes is lost.
+*   **Dual Access**: Password and mTLS (Diplomatic Pass).
 
 ## 🏗 Architecture
 
@@ -48,6 +50,7 @@ To ensure integrity and prevent configuration drift, internal communication chan
 | Service | Container Name | Internal Port | Hardcoded Upstream URL |
 |---------|---------------|---------------|------------------------|
 | **Web** | `talos-web` | 3000 | `http://talos-storage:4000` |
+| **Web (mTLS)** | `talos-web` | 3443 | `http://talos-storage:4000` |
 | **Storage** | `talos-storage` | 4000 | `http://talos-bunker:5000` |
 | **Bunker** | `talos-bunker` | 5000 | *None (Terminal Node)* |
 
@@ -89,16 +92,16 @@ This mode stores secrets only in the local Docker volume. You are responsible fo
 
 ### Prerequisites
 - Docker & Docker Compose
-- A GPG ID (email format)
 
 ### Quick Start
 
-1. **Configure Environment** (Optional)
-   ```bash
-   export GPG_ID="your-email@secure.local"
+1. **Clone the repository**
+   ```sh
+   git clone https://github.com/daniquir/talos.git
+   cd talos
    ```
 
-2. **Launch System**
+2. **Launch the System**
    ```bash
    docker-compose up --build -d
    ```
@@ -108,20 +111,16 @@ This mode stores secrets only in the local Docker volume. You are responsible fo
 
 ## 🔐 Security Protocols
 
-### Genesis Protocol (First Run)
-On the first startup, `talos-bunker` will detect a missing GPG key and initiate the **Genesis Protocol**:
-1. Generates a 4096-bit RSA Master Key.
-2. Exports a backup of the private key to a secure location inside the container.
-3. **Wait for user retrieval.**
+### Initialization (Genesis)
+On the first startup, the system will be **UNINITIALIZED**.
+1. Access the Web UI.
+2. You will be prompted to define your **Master Key**.
+3. This key is sent to the Bunker to generate the RSA 4096-bit keys.
+4. The Bunker is then **SEALED** with this key.
 
-### Emergency Backup Retrieval
-To retrieve the generated private key (you only get one chance before you should delete it):
-
-```bash
-docker exec -it talos-bunker reveal-backup
-```
-
-*Note: The script will display the key and then immediately delete the backup file from the container for security.*
+### Sealed Bunker
+If the container restarts, the Bunker loses the key from RAM and becomes **SEALED**.
+You must log in via the Web UI using the Master Key to **UNSEAL** it.
 
 ### Managing Secrets
 
@@ -144,6 +143,8 @@ The web interface is built with vanilla JavaScript using ES Modules for maintain
 - `js/app.js`: Main controller and event orchestration.
 - `js/api.js`: Data layer handling Fetch requests to the backend.
 - `js/ui.js`: DOM manipulation and visual effects.
+
+> **Note**: This project is a personal portfolio piece designed to showcase architectural patterns, security considerations, and full-stack development in Rust.
 
 ## 📄 License
 

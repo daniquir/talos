@@ -1,7 +1,8 @@
 [package]
 name = "talos-storage"
 version = "1.0.0"
-edition = "2021"
+edition = "2024"
+license = "MIT"
 
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
