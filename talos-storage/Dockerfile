@@ -12,15 +12,24 @@ COPY src ./src
 RUN touch src/main.rs
 RUN cargo build --release
 
-FROM alpine:latest
+FROM alpine:3.19
 # We need git if we want Storage to sync automatically
-RUN apk add --no-cache git openssh-client
+RUN apk add --no-cache git openssh-client wget su-exec
 WORKDIR /app
 COPY --from=builder /app/target/release/talos-storage /app/talos-storage
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /app/talos-storage && \
+    chmod +x /usr/local/bin/entrypoint.sh && \
+    addgroup -g 1000 talos && \
+    adduser -D -u 1000 -G talos talos && \
+    mkdir -p /home/talosuser/.password-store && \
+    chown -R talos:talos /app /home/talosuser
+
+USER talos
 EXPOSE 4000
 
 # Fixed internal configuration
 ENV PORT=4000
 ENV BUNKER_URL=http://talos-bunker:5000
 
-CMD ["./talos-storage"]
+CMD ["/usr/local/bin/entrypoint.sh"]

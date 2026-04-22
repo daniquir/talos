@@ -7,7 +7,7 @@ services:
       - "3000:3000"
       - "3443:3443"
     environment:
-      - DEBUG=true
+      - DEBUG=false
       - DATABASE_URL=sqlite:/data/talos.db
     volumes:
       - ./data/web:/data
@@ -15,14 +15,36 @@ services:
       - net_public  # Accessible from your browser
       - net_middleware # Secure channel to Storage
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
   # LAYER 2: The Storage (The Bridge)
   talos-storage:
     build: ./talos-storage
     container_name: talos-storage
     environment:
-      - GPG_ID=${GPG_ID:-admin@talos.local}
-      - DEBUG=true
+      - GPG_ID=${GPG_ID}
+      - DEBUG=false
     volumes:
       - ./data/password-store:/home/talosuser/.password-store:rw
       - ./config:/app/config:ro
@@ -31,17 +53,61 @@ services:
       - net_middleware # Only accepts requests from Web
       - net_private    # Exclusive channel to Bunker
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:mode=1777 # Writable tmpfs for git operations
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   # LAYER 3: The Bunker (Totally Isolated)
   talos-bunker:
     build: ./talos-bunker
     container_name: talos-bunker
     environment:
-      - GPG_ID=${GPG_ID:-admin@talos.local}
-      - DEBUG=true
+      - GPG_ID=${GPG_ID}
+      - DEBUG=false
     networks:
       - net_private # Only sees Storage, no one else sees it
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/process"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
 networks:
   # This network does NOT have 'internal: true', allowing port mapping

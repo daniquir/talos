@@ -9,10 +9,11 @@ use tokio::io::AsyncWriteExt;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use uuid::Uuid;
-use base64;
+use base64::{Engine as _, engine::general_purpose};
+use zeroize::Zeroize;
 
 // In-Memory Vault for the Master Key. Never written to disk.
-pub static VAULT_KEY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+pub static VAULT_KEY: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Deserialize)]
 pub struct CryptTask {
@@ -62,7 +63,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
 
         "unlock" => {
             if let Ok(mut guard) = VAULT_KEY.lock() {
-                *guard = Some(req.payload);
+                *guard = Some(req.payload.into_bytes());
                 Json(CryptResponse { result: "VAULT_UNSEALED".to_string() })
             } else {
                 Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string() })
@@ -130,7 +131,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                         .await;
                     
                     if let Ok(mut guard) = VAULT_KEY.lock() {
-                        *guard = Some(passphrase.clone());
+                        *guard = Some(passphrase.clone().into_bytes());
                     }
                     Json(CryptResponse { result: "INITIALIZED".to_string() })
                 } else {
@@ -167,7 +168,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             if let Ok(s) = status {
                 if s.success() {
                     if let Ok(mut guard) = VAULT_KEY.lock() {
-                        *guard = Some(passphrase);
+                        *guard = Some(passphrase.into_bytes());
                     }
                     Json(CryptResponse { result: "INITIALIZED".to_string() })
                 } else {
@@ -192,9 +193,9 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
 
         "decrypt" | "encrypt" => {
             if req.mode == "decrypt" {
-                args.extend(["-d", "--always-trust"]);
+                args.extend(["-d"]);
             } else {
-                args.extend(["-e", "-r", &gpg_id, "--always-trust", "--armor"]); 
+                args.extend(["-e", "-r", &gpg_id, "--armor"]);
             }
 
             // Retrieve Key from Memory
@@ -206,19 +207,22 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                 Err(_) => return Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string() }),
             };
 
-            let pass_file = format!("/dev/shm/gpg_pass_{}", Uuid::new_v4());
-            if std::fs::write(&pass_file, &passphrase).is_err() {
-                return Json(CryptResponse { result: "ERROR_MEMORY_WRITE".to_string() });
-            }
-            
             let mut final_args = vec!["--batch", "--pinentry-mode", "loopback"];
             if req.mode == "decrypt" {
                 final_args.push("-d");
             } else {
-                final_args.extend(["-e", "-r", &gpg_id, "--armor"]); 
+                final_args.extend(["-e", "-r", &gpg_id, "--armor"]);
             }
-            final_args.extend(["--passphrase-file", &pass_file]);
 
+            let input = req.payload;
+
+            // Decode base64 if the payload is base64 encoded (from storage)
+            let _decoded_input = match general_purpose::STANDARD.decode(&input) {
+                Ok(decoded) => decoded,
+                Err(_) => input.into_bytes(),
+            };
+
+            // Spawn GPG with stdin piped
             let child = Command::new("gpg")
                 .args(final_args)
                 .stdin(Stdio::piped())
@@ -229,30 +233,27 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             let mut child = match child {
                 Ok(c) => c,
                 Err(_) => {
-                    let _ = std::fs::remove_file(&pass_file);
+                    // Zeroize passphrase before returning
+                    let mut p = passphrase;
+                    p.zeroize();
                     return Json(CryptResponse { result: "ERROR_SPAWN".to_string() });
-                }
+                },
             };
 
-            let input = req.payload;
-            
-            // Decode base64 if the payload is base64 encoded (from storage)
-            let decoded_input = if base64::decode(&input).is_ok() {
-                base64::decode(&input).unwrap_or_else(|_| input.clone().into_bytes())
-            } else {
-                input.clone().into_bytes()
-            };
-            
+            // Write passphrase to GPG via stdin (more secure than file)
             if let Some(mut stdin) = child.stdin.take() {
-                if let Err(_) = stdin.write_all(&decoded_input).await {
-                    let _ = std::fs::remove_file(&pass_file);
-                    return Json(CryptResponse { result: "ERROR_WRITE_STDIN".to_string() });
+                if let Err(_) = stdin.write_all(&passphrase).await {
+                    let mut p = passphrase;
+                    p.zeroize();
+                    return Json(CryptResponse { result: "ERROR_WRITE_PASSPHRASE".to_string() });
                 }
+                // Zeroize passphrase immediately after use
+                let mut p = passphrase;
+                p.zeroize();
                 drop(stdin);
             }
 
             let output = child.wait_with_output().await;
-            let _ = std::fs::remove_file(&pass_file);
             
             match output {
                 Ok(o) => Json(CryptResponse {

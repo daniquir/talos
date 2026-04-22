@@ -8,6 +8,7 @@ use tower_sessions::{Expiry, MemoryStore, SessionManagerLayer};
 use time::Duration;
 use tower_http::services::ServeDir;
 use tower_http::compression::CompressionLayer;
+use tower_http::limit::RequestBodyLimitLayer;
 use std::{env, net::SocketAddr};
 use crate::handlers::{get_version, proxy_list_tree, proxy_decrypt, proxy_save, proxy_delete, proxy_backup, proxy_restore, health_check, proxy_create_category, get_audit_logs, proxy_initialize};
 use crate::db::init_db;
@@ -27,8 +28,10 @@ async fn main() {
     // 3. Configure session layer
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(false) // In production, this should be true if using HTTPS
-        .with_expiry(Expiry::OnInactivity(Duration::minutes(15)));
+        .with_secure(true) // Secure cookie for HTTPS
+        .with_http_only(true) // Prevent JavaScript access to cookies
+        .with_same_site(tower_sessions::cookie::SameSite::Strict) // CSRF protection
+        .with_expiry(Expiry::OnInactivity(Duration::hours(2))); // Increased timeout for military operations
 
     println!("🔒 [SYSTEM] SECURE MODE ACTIVE: Authentication required.");
 
@@ -49,18 +52,19 @@ async fn main() {
         .route("/api/auth/status", get(get_auth_status))
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
+        .route("/api/initialize/import", post(proxy_import_key))
+        .route("/api/auth/backup-key", get(proxy_backup_key))
         // Public routes
         .route("/api/version", get(get_version))
         .route("/api/health", get(health_check))
         .route("/api/initialize", post(proxy_initialize))
-        .route("/api/initialize/import", post(proxy_import_key))
-        .route("/api/auth/backup-key", get(proxy_backup_key))
         // Merge authenticated API routes
         .merge(api_router)
         // Serve static files as a fallback
         .fallback_service(ServeDir::new("./static"))
         // Apply layers (middleware)
         .layer(CompressionLayer::new())
+        .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB limit
         .layer(session_layer)
         .with_state(app_state);
 

@@ -4,10 +4,40 @@ use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath};
+use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::atomic::{AtomicBool, Ordering}};
 use crate::models::{ActionRequest, BunkerTask};
 use crate::config::{CONFIG, DEBUG_MODE, STORE_PATH};
 use zip::write::FileOptions;
+
+// Validate and sanitize path to prevent path traversal attacks
+fn validate_path(path: &str) -> Result<(), String> {
+    // Prevent null bytes
+    if path.contains('\0') {
+        return Err("Path contains null byte".to_string());
+    }
+
+    // Prevent absolute paths
+    if StdPath::new(path).is_absolute() {
+        return Err("Absolute paths not allowed".to_string());
+    }
+
+    // Prevent path traversal
+    if path.contains("..") {
+        return Err("Path traversal not allowed".to_string());
+    }
+
+    // Prevent shell metacharacters
+    if path.chars().any(|c| matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '$' | '`' | '|' | ';' | '&' | '>' | '<')) {
+        return Err("Invalid characters in path".to_string());
+    }
+
+    // Limit path length
+    if path.len() > 255 {
+        return Err("Path too long".to_string());
+    }
+
+    Ok(())
+}
 
 #[derive(Serialize)]
 pub struct TreeNode {
@@ -56,6 +86,11 @@ pub async fn list_tree() -> Json<Vec<TreeNode>> {
 }
 
 pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
+    // Validate path to prevent traversal attacks
+    if let Err(e) = validate_path(&req.path) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+    }
+
     let file_path = format!("{}/{}.gpg", &*STORE_PATH, req.path);
     let encrypted_bytes = fs::read(file_path).unwrap_or_else(|_| vec![]);
     let encrypted_content = base64::encode(&encrypted_bytes);
@@ -89,6 +124,18 @@ pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json
 
 pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
     if *DEBUG_MODE { println!("--> [STORAGE] SAVE request for: {}", req.path); }
+
+    // Validate path to prevent traversal attacks
+    if let Err(e) = validate_path(&req.path) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+    }
+
+    if let Some(ref original_path) = req.original_path {
+        if let Err(e) = validate_path(original_path) {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+        }
+    }
+
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
     
     let mut payload = req.content.unwrap_or_default();
@@ -175,6 +222,11 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
 pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
     if *DEBUG_MODE { println!("--> [STORAGE] DELETE request for: {}", req.path); }
 
+    // Validate path to prevent traversal attacks
+    if let Err(e) = validate_path(&req.path) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+    }
+
     let store_path = STORE_PATH.as_str();
     let path_as_dir = StdPath::new(store_path).join(&req.path);
     let path_as_file = StdPath::new(store_path).join(format!("{}.gpg", req.path));
@@ -216,6 +268,12 @@ pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<V
 
 pub async fn create_category(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
     if *DEBUG_MODE { println!("--> [STORAGE] CREATE CATEGORY request for: {}", req.path); }
+
+    // Validate path to prevent traversal attacks
+    if let Err(e) = validate_path(&req.path) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+    }
+
     let dir_path = format!("{}/{}", &*STORE_PATH, req.path);
     
     if let Err(_) = fs::create_dir_all(&dir_path) {
@@ -373,13 +431,12 @@ pub async fn import_bunker_key(Json(req): Json<ImportRequest>) -> impl IntoRespo
 }
 
 // Global flag to ensure the key can only be downloaded once per session/boot
-static mut KEY_DOWNLOADED: bool = false;
+static KEY_DOWNLOADED: AtomicBool = AtomicBool::new(false);
 
 pub async fn backup_bunker_key() -> impl IntoResponse {
-    unsafe {
-        if KEY_DOWNLOADED {
-            return (StatusCode::GONE, Json(json!({"error": "Key already downloaded. Access revoked."}))).into_response();
-        }
+    // Check if key was already downloaded (thread-safe)
+    if KEY_DOWNLOADED.load(Ordering::SeqCst) {
+        return (StatusCode::GONE, Json(json!({"error": "Key already downloaded. Access revoked."}))).into_response();
     }
 
     if *DEBUG_MODE { println!("--> [STORAGE] BACKUP KEY request"); }
@@ -395,10 +452,10 @@ pub async fn backup_bunker_key() -> impl IntoResponse {
         Ok(response) if response.status().is_success() => {
             let data: Value = response.json().await.unwrap_or_default();
             let key_content = data["result"].as_str().unwrap_or("").to_string();
-            
-            // Mark as downloaded to prevent future access
-            unsafe { KEY_DOWNLOADED = true; }
-            
+
+            // Mark as downloaded to prevent future access (thread-safe)
+            KEY_DOWNLOADED.store(true, Ordering::SeqCst);
+
             (StatusCode::OK, key_content).into_response()
         },
         _ => (StatusCode::BAD_GATEWAY, Json(json!({"error": "Failed to export key"}))).into_response()

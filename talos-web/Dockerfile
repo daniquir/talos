@@ -18,10 +18,10 @@ RUN touch src/main.rs
 RUN cargo build --release
 
 # STAGE 2: Runtime (Lightweight Image)
-FROM alpine:latest
+FROM alpine:3.19
 
 # Install necessary libraries for reqwest to work (SSL)
-RUN apk add --no-cache ca-certificates libgcc sqlite-libs openssl
+RUN apk add --no-cache ca-certificates libgcc sqlite-libs openssl wget su-exec
 
 WORKDIR /app
 
@@ -33,11 +33,17 @@ COPY static ./static
 COPY gen_certs.sh /usr/local/bin/gen_certs.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
-RUN chmod +x /usr/local/bin/gen_certs.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/gen_certs.sh && \
+    chmod +x /usr/local/bin/entrypoint.sh && \
+    chmod +x /app/talos-web
 
-# Ensure binary has execution permissions
-RUN chmod +x /app/talos-web
+# Create data and certs directories with proper permissions
+RUN mkdir -p /data /app/certs && \
+    addgroup -g 1000 talos && \
+    adduser -D -u 1000 -G talos talos && \
+    chown -R talos:talos /app /data
+
+USER talos
 
 # Expose port for documentation (real mapping is done in docker-compose)
 EXPOSE 3000 3443
