@@ -231,9 +231,12 @@ pub async fn proxy_restore(
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "RESTORE", "full_system").await;
 
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+    while let Ok(Some(field)) = multipart.next_field().await {
         if field.name() == Some("backup") {
-            let data = field.bytes().await.unwrap_or_default();
+            let data = match field.bytes().await {
+                Ok(b) => b,
+                Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Failed to read backup data"}))),
+            };
             
             // 1. Intentar abrir el ZIP
             let reader = Cursor::new(&data);
@@ -302,7 +305,10 @@ async fn proxy_request(url: &str, body: Option<Value>) -> (StatusCode, Json<Valu
     match req.send().await {
         Ok(res) => {
             let status = res.status();
-            let data = res.json::<Value>().await.unwrap_or_else(|_| json!({"error": "Invalid node response"}));
+            let data = match res.json::<Value>().await {
+                Ok(d) => d,
+                Err(_) => json!({"error": "Invalid node response"}),
+            };
             if !status.is_success() {
                 println!("⚠️ [WEB] Proxy Error [{}]: {:?}", status, data);
             }

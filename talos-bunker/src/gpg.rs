@@ -35,156 +35,206 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
     
     if is_debug() { println!("--> [BUNKER] Processing GPG task: {}", req.mode); }
     
-    if req.mode == "check" {
-        // Check if key exists on disk
-        let check = Command::new("gpg")
-            .args(["--list-secret-keys", &gpg_id])
-            .output()
-            .await
-            .expect("Failed to check keys");
+    match req.mode.as_str() {
+        "check" => {
+            // Check if key exists on disk
+            let check = Command::new("gpg")
+                .args(["--batch", "--list-secret-keys", &gpg_id])
+                .output()
+                .await;
+                
+            let check = match check {
+                Ok(o) => o,
+                Err(_) => return Json(CryptResponse { result: "ERROR_GPG_NOT_FOUND".to_string() }),
+            };
+                
+            if !check.status.success() {
+                 return Json(CryptResponse { result: "UNINITIALIZED".to_string() });
+            }
+
+            let is_unsealed = VAULT_KEY.lock().map(|guard| guard.is_some()).unwrap_or(false);
+            if is_unsealed {
+                Json(CryptResponse { result: "UNSEALED".to_string() })
+            } else {
+                Json(CryptResponse { result: "SEALED".to_string() })
+            }
+        },
+
+        "unlock" => {
+            if let Ok(mut guard) = VAULT_KEY.lock() {
+                *guard = Some(req.payload);
+                Json(CryptResponse { result: "VAULT_UNSEALED".to_string() })
+            } else {
+                Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string() })
+            }
+        },
+
+        "initialize" => {
+            // Double check it doesn't exist
+            let check = Command::new("gpg")
+                .args(["--batch", "--list-secret-keys", &gpg_id])
+                .output()
+                .await;
+                
+            if let Ok(output) = check {
+                if output.status.success() {
+                    return Json(CryptResponse { result: "ERROR_ALREADY_INIT".to_string() });
+                }
+            }
+
+            let passphrase = &req.payload;
             
-        if !check.status.success() {
-             return Json(CryptResponse { result: "UNINITIALIZED".to_string() });
-        }
-
-        if VAULT_KEY.lock().unwrap().is_some() {
-            return Json(CryptResponse { result: "UNSEALED".to_string() });
-        } else {
-            return Json(CryptResponse { result: "SEALED".to_string() });
-        }
-    }
-
-    // UNSEAL OPERATION: Validate key and store in RAM
-    if req.mode == "unlock" {
-        *VAULT_KEY.lock().unwrap() = Some(req.payload);
-        return Json(CryptResponse { result: "VAULT_UNSEALED".to_string() });
-    }
-
-    // INITIALIZE OPERATION: Generate the master key with provided passphrase
-    if req.mode == "initialize" {
-        // Double check it doesn't exist
-        let check = Command::new("gpg")
-            .args(["--list-secret-keys", &gpg_id])
-            .output()
-            .await
-            .expect("Failed to check keys");
+            // Generate key script
+            let gen_params = format!(
+                "Key-Type: RSA\nKey-Length: 4096\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
+                gpg_id, passphrase
+            );
             
-        if check.status.success() {
-             return Json(CryptResponse { result: "ERROR_ALREADY_INIT".to_string() });
-        }
+            let child = Command::new("gpg")
+                .args(["--batch", "--generate-key"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
 
-        let passphrase = &req.payload;
-        
-        // Generate key script
-        let gen_params = format!(
-            "Key-Type: RSA\nKey-Length: 4096\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
-            gpg_id, passphrase
-        );
-        let gen_file = format!("/tmp/gpg_gen_{}", Uuid::new_v4());
-        if std::fs::write(&gen_file, gen_params).is_err() {
-             return Json(CryptResponse { result: "ERROR_WRITE".to_string() });
-        }
+            let mut child = match child {
+                Ok(c) => c,
+                Err(_) => return Json(CryptResponse { result: "ERROR_SPAWN".to_string() }),
+            };
 
-        let status = Command::new("gpg")
-            .args(["--batch", "--generate-key", &gen_file])
-            .status()
-            .await
-            .expect("Failed to generate key");
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(gen_params.as_bytes()).await;
+                drop(stdin);
+            }
+
+            let status = child.wait().await;
             
-        let _ = std::fs::remove_file(gen_file);
+            if let Ok(s) = status {
+                if s.success() {
+                    if let Ok(mut guard) = VAULT_KEY.lock() {
+                        *guard = Some(passphrase.clone());
+                    }
+                    Json(CryptResponse { result: "INITIALIZED".to_string() })
+                } else {
+                    Json(CryptResponse { result: "ERROR_GEN".to_string() })
+                }
+            } else {
+                Json(CryptResponse { result: "ERROR_WAIT".to_string() })
+            }
+        },
 
-        if status.success() {
-            // Auto-unseal in memory since we just set it
-            *VAULT_KEY.lock().unwrap() = Some(passphrase.clone());
-            return Json(CryptResponse { result: "INITIALIZED".to_string() });
-        } else {
-            return Json(CryptResponse { result: "ERROR_GEN".to_string() });
-        }
-    }
+        "import" => {
+            let key_data = req.payload;
+            let passphrase = req.passphrase.unwrap_or_default();
 
-    // IMPORT OPERATION: Import existing private key
-    if req.mode == "import" {
-        let key_data = req.payload;
-        let passphrase = req.passphrase.unwrap_or_default();
+            let child = Command::new("gpg")
+                .args(["--batch", "--import"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
 
-        let key_file = format!("/tmp/gpg_import_{}", Uuid::new_v4());
-        if std::fs::write(&key_file, key_data).is_err() {
-             return Json(CryptResponse { result: "ERROR_WRITE".to_string() });
-        }
+            let mut child = match child {
+                Ok(c) => c,
+                Err(_) => return Json(CryptResponse { result: "ERROR_SPAWN".to_string() }),
+            };
 
-        let status = Command::new("gpg")
-            .args(["--batch", "--import", &key_file])
-            .status()
-            .await
-            .expect("Failed to import key");
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(key_data.as_bytes()).await;
+                drop(stdin);
+            }
+
+            let status = child.wait().await;
             
-        let _ = std::fs::remove_file(key_file);
+            if let Ok(s) = status {
+                if s.success() {
+                    if let Ok(mut guard) = VAULT_KEY.lock() {
+                        *guard = Some(passphrase);
+                    }
+                    Json(CryptResponse { result: "INITIALIZED".to_string() })
+                } else {
+                    Json(CryptResponse { result: "ERROR_IMPORT".to_string() })
+                }
+            } else {
+                Json(CryptResponse { result: "ERROR_WAIT".to_string() })
+            }
+        },
 
-        if status.success() {
-            // Auto-unseal in memory
-            *VAULT_KEY.lock().unwrap() = Some(passphrase);
-            return Json(CryptResponse { result: "INITIALIZED".to_string() });
-        } else {
-            return Json(CryptResponse { result: "ERROR_IMPORT".to_string() });
-        }
+        "export_key" => {
+            let output = Command::new("gpg")
+                .args(["--batch", "--export-secret-keys", "--armor", &gpg_id])
+                .output()
+                .await;
+            
+            match output {
+                Ok(o) => Json(CryptResponse { result: String::from_utf8_lossy(&o.stdout).to_string() }),
+                Err(_) => Json(CryptResponse { result: "ERROR_EXPORT".to_string() }),
+            }
+        },
+
+        "decrypt" | "encrypt" => {
+            if req.mode == "decrypt" {
+                args.push("-d");
+            } else {
+                args.extend(["-e", "-r", &gpg_id, "--armor"]); 
+            }
+
+            // Retrieve Key from Memory
+            let passphrase = match VAULT_KEY.lock() {
+                Ok(guard) => match guard.as_ref() {
+                    Some(p) => p.clone(),
+                    None => return Json(CryptResponse { result: "ERROR_VAULT_SEALED".to_string() }),
+                },
+                Err(_) => return Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string() }),
+            };
+
+            let pass_file = format!("/dev/shm/gpg_pass_{}", Uuid::new_v4());
+            if std::fs::write(&pass_file, &passphrase).is_err() {
+                return Json(CryptResponse { result: "ERROR_MEMORY_WRITE".to_string() });
+            }
+            
+            let mut final_args = vec!["--batch", "--pinentry-mode", "loopback"];
+            if req.mode == "decrypt" {
+                final_args.push("-d");
+            } else {
+                final_args.extend(["-e", "-r", &gpg_id, "--armor"]); 
+            }
+            final_args.extend(["--passphrase-file", &pass_file]);
+
+            let child = Command::new("gpg")
+                .args(final_args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn();
+
+            let mut child = match child {
+                Ok(c) => c,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&pass_file);
+                    return Json(CryptResponse { result: "ERROR_SPAWN".to_string() });
+                }
+            };
+
+            let input = req.payload;
+            if let Some(mut stdin) = child.stdin.take() {
+                if let Err(_) = stdin.write_all(input.as_bytes()).await {
+                    let _ = std::fs::remove_file(&pass_file);
+                    return Json(CryptResponse { result: "ERROR_WRITE_STDIN".to_string() });
+                }
+                drop(stdin);
+            }
+
+            let output = child.wait_with_output().await;
+            let _ = std::fs::remove_file(&pass_file);
+            
+            match output {
+                Ok(o) => Json(CryptResponse {
+                    result: String::from_utf8_lossy(&o.stdout).to_string(),
+                }),
+                Err(_) => Json(CryptResponse { result: "ERROR_GPG_EXEC".to_string() }),
+            }
+        },
+
+        _ => Json(CryptResponse { result: "ERROR_INVALID_MODE".to_string() }),
     }
-
-    // EXPORT KEY OPERATION: Backup the private key
-    if req.mode == "export_key" {
-        let output = Command::new("gpg")
-            .args(["--export-secret-keys", "--armor", &gpg_id])
-            .output()
-            .await
-            .expect("Failed to export key");
-        return Json(CryptResponse { result: String::from_utf8_lossy(&output.stdout).to_string() });
-    }
-
-    if req.mode == "decrypt" {
-        args.push("-d");
-    } else {
-        args.extend(["-e", "-r", &gpg_id, "--armor"]); 
-    }
-
-    // Retrieve Key from Memory
-    let passphrase = {
-        let guard = VAULT_KEY.lock().unwrap();
-        match guard.as_ref() {
-            Some(p) => p.clone(), // Clone the string to release the lock immediately
-            None => return Json(CryptResponse { result: "ERROR_VAULT_SEALED".to_string() }),
-        }
-    };
-
-    // Securely pass passphrase to GPG via temporary file in RAM (/dev/shm)
-    // This avoids showing it in process list (ps aux)
-    let pass_file = format!("/dev/shm/gpg_pass_{}", Uuid::new_v4());
-    if let Err(_) = std::fs::write(&pass_file, &passphrase) {
-        return Json(CryptResponse { result: "ERROR_MEMORY_WRITE".to_string() });
-    }
-    args.extend(["--passphrase-file", &pass_file]);
-    // Note: GPG 2.x might require --pinentry-mode loopback for file/pipe password
-
-    // Use Tokio's asynchronous Command to prevent blocking the runtime during GPG operations
-    let mut child = Command::new("gpg")
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to start GPG");
-
-    let mut stdin = child.stdin.take().unwrap();
-    let input = req.payload;
-    
-    // Asynchronously write the payload to the GPG process stdin
-    stdin.write_all(input.as_bytes()).await.unwrap();
-    drop(stdin);
-
-    // Await the process completion and capture output
-    let output = child.wait_with_output().await.expect("GPG process failed");
-    
-    // Wipe password file immediately
-    let _ = std::fs::remove_file(pass_file);
-    
-    Json(CryptResponse {
-        result: String::from_utf8_lossy(&output.stdout).to_string(),
-    })
 }

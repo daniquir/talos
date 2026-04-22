@@ -108,11 +108,14 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
             
         if let Ok(res) = decrypt_res {
             if res.status().is_success() {
-                let data: serde_json::Value = res.json().await.unwrap_or(json!({"result": ""}));
+                let data: serde_json::Value = match res.json().await {
+                    Ok(d) => d,
+                    Err(_) => json!({"result": ""}),
+                };
                 let full_text = data["result"].as_str().unwrap_or("").to_string();
                 let old_pass = full_text.split('\n').next().unwrap_or("");
                 
-                // Replace marker with old password
+                // Replace marker with the old password
                 payload = payload.replace("__TALOS_KEEP_SECRET__", old_pass);
             }
         }
@@ -127,7 +130,10 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
 
     match res_result {
         Ok(res) if res.status().is_success() => {
-            let data: serde_json::Value = res.json().await.unwrap_or(serde_json::json!({"result": ""}));
+            let data: serde_json::Value = match res.json().await {
+                Ok(d) => d,
+                Err(_) => json!({"result": ""}),
+            };
             let armored_gpg = data["result"].as_str().unwrap_or("");
             
             if armored_gpg.is_empty() {
@@ -174,7 +180,7 @@ pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<V
     let path_as_file = StdPath::new(store_path).join(format!("{}.gpg", req.path));
 
     if path_as_file.is_file() {
-        // Attempt to delete as a file
+        // Attempt to delete it as a file
         if fs::remove_file(&path_as_file).is_ok() {
             commit_changes(&format!("Delete secret: {}", req.path));
             (StatusCode::OK, Json(json!({"status": "OK"})))
@@ -182,10 +188,10 @@ pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<V
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not delete file"})))
         }
     } else if path_as_dir.is_dir() {
-        // Attempt to delete as a directory
+        // Attempt to delete it as a directory
         match fs::read_dir(&path_as_dir) {
             Ok(dir) => {
-                // Check if directory contains anything other than .gitkeep
+                // Check if the directory contains anything other than .gitkeep
                 let non_gitkeep_entries = dir.filter_map(Result::ok)
                     .filter(|e| e.file_name() != ".gitkeep")
                     .count();
@@ -307,7 +313,7 @@ pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoR
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
     let client = reqwest::Client::new();
 
-    // Check if bunker is already initialized
+    // Check if the bunker is already initialized
     let check_res: serde_json::Value = client.post(format!("{}/process", bunker_url))
         .json(&BunkerTask { payload: "".to_string(), mode: "check".to_string() })
         .send().await.unwrap().json().await.unwrap();
@@ -366,7 +372,7 @@ pub async fn import_bunker_key(Json(req): Json<ImportRequest>) -> impl IntoRespo
     }
 }
 
-// Global flag to ensure key can only be downloaded once per session/boot
+// Global flag to ensure the key can only be downloaded once per session/boot
 static mut KEY_DOWNLOADED: bool = false;
 
 pub async fn backup_bunker_key() -> impl IntoResponse {
@@ -469,7 +475,7 @@ fn commit_changes(msg: &str) {
     let store_path = STORE_PATH.as_str();
     
     if CONFIG.backend.r#type == "git" {
-        // Only run git commands if backend is git
+        // Only run git commands if the backend is git
         let _ = std::process::Command::new("git").args(["-C", store_path, "add", "."]).status();
         let _ = std::process::Command::new("git").args(["-C", store_path, "commit", "-m", msg]).status();
         
