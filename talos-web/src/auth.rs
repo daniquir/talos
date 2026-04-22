@@ -8,16 +8,69 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
 use tower_sessions::Session;
 use zeroize::Zeroize;
-use crate::state::AppState;
+use crate::state::{AppState, RateLimiter, RateLimitEntry};
 use crate::handlers::log_audit;
+
+const MAX_LOGIN_ATTEMPTS: u32 = 5;
+const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
+const CSRF_TOKEN_KEY: &str = "csrf_token";
+
+async fn generate_csrf_token(session: &Session) -> Result<String, StatusCode> {
+    if let Some(token) = session.get::<String>(CSRF_TOKEN_KEY).await.unwrap_or(None) {
+        return Ok(token);
+    }
+    
+    // Generate simple random token
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let token = format!("csrf_{:x}", timestamp);
+    
+    session.insert(CSRF_TOKEN_KEY, &token).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(token)
+}
+
+pub async fn validate_csrf_token(session: &Session, token: &str) -> Result<bool, StatusCode> {
+    let stored_token = session.get::<String>(CSRF_TOKEN_KEY).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    Ok(stored_token == token)
+}
 
 #[derive(Deserialize, Zeroize)]
 #[zeroize(drop)]
 pub struct LoginRequest {
     pub key: String,
+}
+
+fn check_rate_limit(ip: IpAddr, rate_limiter: &RateLimiter) -> bool {
+    let mut limiter = rate_limiter.lock().unwrap();
+    let now = Instant::now();
+    
+    if let Some(entry) = limiter.get_mut(&ip) {
+        if now.duration_since(entry.window_start) > Duration::from_secs(RATE_LIMIT_WINDOW_SECONDS) {
+            // Reset window
+            entry.attempts = 1;
+            entry.window_start = now;
+            true
+        } else {
+            entry.attempts += 1;
+            entry.attempts <= MAX_LOGIN_ATTEMPTS
+        }
+    } else {
+        limiter.insert(ip, RateLimitEntry {
+            attempts: 1,
+            window_start: now,
+        });
+        true
+    }
 }
 
 #[derive(Serialize)]
@@ -69,6 +122,12 @@ pub async fn login(
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
+    // Check rate limiting
+    if !check_rate_limit(addr.ip(), &state.rate_limiter) {
+        log_audit(&state, &session, Some(addr.ip()), headers.get(header::USER_AGENT), "LOGIN_RATE_LIMITED", "system").await;
+        return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "Too many login attempts. Please wait 60 seconds."})));
+    }
+    
     let client = reqwest::Client::new();
     let storage_url = std::env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
 
@@ -83,8 +142,12 @@ pub async fn login(
         Ok(response) if response.status().is_success() => {
             session.insert("authenticated", true).await.unwrap();
             session.insert("auth_method", "password").await.unwrap();
+            let csrf_token = generate_csrf_token(&session).await.unwrap_or_default();
             log_audit(&state, &session, Some(addr.ip()), ua_header, "LOGIN_SUCCESS", "system").await;
-            (StatusCode::OK, Json(json!({"status": "Logged in"})))
+            (StatusCode::OK, Json(json!({
+                "status": "Logged in",
+                "csrf_token": csrf_token
+            })))
         },
         _ => {
             log_audit(&state, &session, Some(addr.ip()), ua_header, "LOGIN_FAILURE", "system").await;

@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -11,7 +12,12 @@ use once_cell::sync::Lazy;
 use uuid::Uuid;
 use base64::{Engine as _, engine::general_purpose};
 use zeroize::Zeroize;
+use chrono::Utc;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use hex;
 
+type HmacSha256 = Hmac<Sha256>;
 // In-Memory Vault for the Master Key. Never written to disk.
 pub static VAULT_KEY: Lazy<Mutex<Option<Vec<u8>>>> = Lazy::new(|| Mutex::new(None));
 
@@ -26,18 +32,46 @@ pub struct CryptTask {
 #[derive(Serialize)]
 pub struct CryptResponse {
     pub result: String,
+    pub signature: Option<String>,
 }
 
 fn is_debug() -> bool {
     env::var("DEBUG").unwrap_or_default() == "true"
 }
 
-pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTask>) -> Json<CryptResponse> {
+fn log_audit_event(action: &str, status: &str, details: &str) {
+    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    eprintln!("[AUDIT {}] ACTION={} STATUS={} DETAILS={}", timestamp, action, status, details);
+}
+
+fn sign_response(result: &str) -> String {
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+    let mut mac = HmacSha256::new_from_slice(shared_secret.as_bytes()).unwrap();
+    mac.update(result.as_bytes());
+    let signature = hex::encode(mac.finalize().into_bytes());
+    signature
+}
+
+pub async fn process_gpg(State(_state): State<AppState>, headers: HeaderMap, Json(req): Json<CryptTask>) -> Json<CryptResponse> {
+    // Verify shared secret for authentication
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+    if let Some(auth_header) = headers.get("X-Talos-Auth") {
+        if auth_header.to_str().unwrap_or("") != shared_secret {
+            log_audit_event("auth", "failed", "invalid shared secret");
+            return Json(CryptResponse { result: "ERROR_UNAUTHORIZED".to_string(), signature: None });
+        }
+    } else {
+        log_audit_event("auth", "failed", "missing auth header");
+        return Json(CryptResponse { result: "ERROR_UNAUTHORIZED".to_string(), signature: None });
+    }
+    
     let gpg_id = env::var("GPG_ID").unwrap_or_else(|_| "admin@talos.local".to_string());
     let mut args = vec!["--batch", "--pinentry-mode", "loopback"];
     
     match req.mode.as_str() {
         "check" => {
+            log_audit_event("gpg_check", "started", &format!("checking key for {}", gpg_id));
+            
             // Check if key exists on disk
             let check = Command::new("gpg")
                 .args(["--batch", "--list-secret-keys", &gpg_id])
@@ -46,31 +80,46 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                 
             let check = match check {
                 Ok(o) => o,
-                Err(_) => return Json(CryptResponse { result: "ERROR_GPG_NOT_FOUND".to_string() }),
+                Err(_) => {
+                    log_audit_event("gpg_check", "failed", "GPG not found");
+                    return Json(CryptResponse { result: "ERROR_GPG_NOT_FOUND".to_string(), signature: None });
+                },
             };
                 
             if !check.status.success() {
-                 return Json(CryptResponse { result: "UNINITIALIZED".to_string() });
+                 return Json(CryptResponse { result: "UNINITIALIZED".to_string(), signature: None });
             }
 
             let is_unsealed = VAULT_KEY.lock().map(|guard| guard.is_some()).unwrap_or(false);
             if is_unsealed {
-                Json(CryptResponse { result: "UNSEALED".to_string() })
+                let result = "UNSEALED".to_string();
+                let signature = sign_response(&result);
+                Json(CryptResponse { result, signature: Some(signature) })
             } else {
-                Json(CryptResponse { result: "SEALED".to_string() })
+                let result = "SEALED".to_string();
+                let signature = sign_response(&result);
+                Json(CryptResponse { result, signature: Some(signature) })
             }
         },
 
         "unlock" => {
+            log_audit_event("vault_unlock", "attempted", "unlocking memory vault");
+            
             if let Ok(mut guard) = VAULT_KEY.lock() {
                 *guard = Some(req.payload.into_bytes());
-                Json(CryptResponse { result: "VAULT_UNSEALED".to_string() })
+                log_audit_event("vault_unlock", "success", "memory vault unlocked");
+                let result = "VAULT_UNSEALED".to_string();
+                let signature = sign_response(&result);
+                Json(CryptResponse { result, signature: Some(signature) })
             } else {
-                Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string() })
+                log_audit_event("vault_unlock", "failed", "lock acquisition failed");
+                Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string(), signature: None })
             }
         },
 
         "initialize" => {
+            log_audit_event("gpg_init", "started", &format!("initializing key for {}", gpg_id));
+            
             // Double check it doesn't exist
             let check = Command::new("gpg")
                 .args(["--batch", "--list-secret-keys", &gpg_id])
@@ -79,7 +128,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                 
             if let Ok(output) = check {
                 if output.status.success() {
-                    return Json(CryptResponse { result: "ERROR_ALREADY_INIT".to_string() });
+                    return Json(CryptResponse { result: "ERROR_ALREADY_INIT".to_string(), signature: None });
                 }
             }
 
@@ -108,7 +157,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
 
             let mut child = match child {
                 Ok(c) => c,
-                Err(_) => return Json(CryptResponse { result: "ERROR_SPAWN".to_string() }),
+                Err(_) => return Json(CryptResponse { result: "ERROR_SPAWN".to_string(), signature: None }),
             };
 
             if let Some(mut stdin) = child.stdin.take() {
@@ -133,12 +182,12 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                     if let Ok(mut guard) = VAULT_KEY.lock() {
                         *guard = Some(passphrase.clone().into_bytes());
                     }
-                    Json(CryptResponse { result: "INITIALIZED".to_string() })
+                    Json(CryptResponse { result: "INITIALIZED".to_string(), signature: None })
                 } else {
-                    Json(CryptResponse { result: "ERROR_GEN".to_string() })
+                    Json(CryptResponse { result: "ERROR_GEN".to_string(), signature: None })
                 }
             } else {
-                Json(CryptResponse { result: "ERROR_WAIT".to_string() })
+                Json(CryptResponse { result: "ERROR_WAIT".to_string(), signature: None })
             }
         },
 
@@ -155,7 +204,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
 
             let mut child = match child {
                 Ok(c) => c,
-                Err(_) => return Json(CryptResponse { result: "ERROR_SPAWN".to_string() }),
+                Err(_) => return Json(CryptResponse { result: "ERROR_SPAWN".to_string(), signature: None }),
             };
 
             if let Some(mut stdin) = child.stdin.take() {
@@ -170,12 +219,12 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                     if let Ok(mut guard) = VAULT_KEY.lock() {
                         *guard = Some(passphrase.into_bytes());
                     }
-                    Json(CryptResponse { result: "INITIALIZED".to_string() })
+                    Json(CryptResponse { result: "INITIALIZED".to_string(), signature: None })
                 } else {
-                    Json(CryptResponse { result: "ERROR_IMPORT".to_string() })
+                    Json(CryptResponse { result: "ERROR_IMPORT".to_string(), signature: None })
                 }
             } else {
-                Json(CryptResponse { result: "ERROR_WAIT".to_string() })
+                Json(CryptResponse { result: "ERROR_WAIT".to_string(), signature: None })
             }
         },
 
@@ -185,13 +234,14 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                 .output()
                 .await;
             
-            match output {
-                Ok(o) => Json(CryptResponse { result: String::from_utf8_lossy(&o.stdout).to_string() }),
-                Err(_) => Json(CryptResponse { result: "ERROR_EXPORT".to_string() }),
+            return match output {
+                Ok(o) => Json(CryptResponse { result: String::from_utf8_lossy(&o.stdout).to_string(), signature: None }),
+                Err(_) => Json(CryptResponse { result: "ERROR_EXPORT".to_string(), signature: None }),
             }
         },
 
         "decrypt" | "encrypt" => {
+            log_audit_event(&format!("gpg_{}", req.mode), "started", &format!("operation for {}", gpg_id));
             if req.mode == "decrypt" {
                 args.extend(["-d"]);
             } else {
@@ -202,9 +252,9 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             let passphrase = match VAULT_KEY.lock() {
                 Ok(guard) => match guard.as_ref() {
                     Some(p) => p.clone(),
-                    None => return Json(CryptResponse { result: "ERROR_VAULT_SEALED".to_string() }),
+                    None => return Json(CryptResponse { result: "ERROR_VAULT_SEALED".to_string(), signature: None }),
                 },
-                Err(_) => return Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string() }),
+                Err(_) => return Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string(), signature: None }),
             };
 
             let mut final_args = vec!["--batch", "--pinentry-mode", "loopback"];
@@ -236,7 +286,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                     // Zeroize passphrase before returning
                     let mut p = passphrase;
                     p.zeroize();
-                    return Json(CryptResponse { result: "ERROR_SPAWN".to_string() });
+                    return Json(CryptResponse { result: "ERROR_SPAWN".to_string(), signature: None });
                 },
             };
 
@@ -245,7 +295,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                 if let Err(_) = stdin.write_all(&passphrase).await {
                     let mut p = passphrase;
                     p.zeroize();
-                    return Json(CryptResponse { result: "ERROR_WRITE_PASSPHRASE".to_string() });
+                    return Json(CryptResponse { result: "ERROR_WRITE_PASSPHRASE".to_string(), signature: None });
                 }
                 // Zeroize passphrase immediately after use
                 let mut p = passphrase;
@@ -256,13 +306,19 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             let output = child.wait_with_output().await;
             
             match output {
-                Ok(o) => Json(CryptResponse {
-                    result: String::from_utf8_lossy(&o.stdout).to_string(),
-                }),
-                Err(_) => Json(CryptResponse { result: "ERROR_GPG_EXEC".to_string() }),
+                Ok(o) => {
+                    log_audit_event(&format!("gpg_{}", req.mode), "success", "operation completed");
+                    let result = String::from_utf8_lossy(&o.stdout).to_string();
+                    let signature = sign_response(&result);
+                    Json(CryptResponse { result, signature: Some(signature) })
+                },
+                Err(e) => {
+                    log_audit_event(&format!("gpg_{}", req.mode), "failed", &format!("error: {}", e));
+                    Json(CryptResponse { result: "ERROR_GPG_EXEC".to_string(), signature: None })
+                },
             }
         },
 
-        _ => Json(CryptResponse { result: "ERROR_INVALID_MODE".to_string() }),
+        _ => Json(CryptResponse { result: "ERROR_INVALID_MODE".to_string(), signature: None }),
     }
 }

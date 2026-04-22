@@ -1,6 +1,6 @@
 [package]
 name = "talos-storage"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 
@@ -15,6 +15,10 @@ once_cell = "1.19"
 zip = "0.6"
 walkdir = "2.4"
 base64 = "0.22"
+chrono = "0.4"
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
 
 [dev-dependencies]
 wiremock = "0.5"

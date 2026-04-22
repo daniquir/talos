@@ -45,6 +45,7 @@ services:
     environment:
       - GPG_ID=${GPG_ID}
       - DEBUG=false
+      - SHARED_SECRET=${SHARED_SECRET:-changeme_in_production}
     volumes:
       - ./data/password-store:/home/talosuser/.password-store:rw
       - ./config:/app/config:ro
@@ -83,6 +84,7 @@ services:
     environment:
       - GPG_ID=${GPG_ID}
       - DEBUG=false
+      - SHARED_SECRET=${SHARED_SECRET:-changeme_in_production}
     networks:
       - net_private # Only sees Storage, no one else sees it
     restart: always
@@ -108,6 +110,10 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+
+secrets:
+  id_rsa_talos:
+    file: ./data/ssh/id_rsa_talos
 
 networks:
   # This network does NOT have 'internal: true', allowing port mapping

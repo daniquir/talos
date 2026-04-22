@@ -8,6 +8,26 @@ use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::atomi
 use crate::models::{ActionRequest, BunkerTask};
 use crate::config::{CONFIG, DEBUG_MODE, STORE_PATH};
 use zip::write::FileOptions;
+use chrono::Utc;
+use base64::{Engine as _, engine::general_purpose};
+use sha2::{Sha256, Digest};
+use hmac::{Hmac, Mac};
+use hex;
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn log_audit_event(action: &str, status: &str, details: &str) {
+    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    eprintln!("[AUDIT {}] ACTION={} STATUS={} DETAILS={}", timestamp, action, status, details);
+}
+
+fn verify_signature(result: &str, signature: &str) -> bool {
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+    let mut mac = HmacSha256::new_from_slice(shared_secret.as_bytes()).unwrap();
+    mac.update(result.as_bytes());
+    let expected_signature = hex::encode(mac.finalize().into_bytes());
+    expected_signature == signature
+}
 
 // Validate and sanitize path to prevent path traversal attacks
 fn validate_path(path: &str) -> Result<(), String> {
@@ -93,14 +113,17 @@ pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json
 
     let file_path = format!("{}/{}.gpg", &*STORE_PATH, req.path);
     let encrypted_bytes = fs::read(file_path).unwrap_or_else(|_| vec![]);
-    let encrypted_content = base64::encode(&encrypted_bytes);
+    let encrypted_content = general_purpose::STANDARD.encode(&encrypted_bytes);
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
 
     let client = reqwest::Client::new();
     match client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", shared_secret)
         .json(&BunkerTask {
             payload: encrypted_content,
             mode: "decrypt".to_string(),
+            signature: None,
         })
         .send().await 
     {
@@ -123,10 +146,13 @@ pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json
 }
 
 pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
+    log_audit_event("storage_save", "started", &format!("saving to path: {}", req.path));
+    
     if *DEBUG_MODE { println!("--> [STORAGE] SAVE request for: {}", req.path); }
 
     // Validate path to prevent traversal attacks
     if let Err(e) = validate_path(&req.path) {
+        log_audit_event("storage_save", "failed", &format!("path validation failed: {}", e));
         return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
     }
 
@@ -137,6 +163,7 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
     }
 
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     
     let mut payload = req.content.unwrap_or_default();
     
@@ -147,9 +174,11 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
         let encrypted_content = fs::read_to_string(&file_path).unwrap_or_default();
         
         let decrypt_res = client.post(format!("{}/process", bunker_url))
+            .header("X-Talos-Auth", &shared_secret)
             .json(&BunkerTask {
                 payload: encrypted_content,
                 mode: "decrypt".to_string(),
+                signature: None,
             })
             .send().await;
             
@@ -160,6 +189,14 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
                     Err(_) => json!({"result": ""}),
                 };
                 let full_text = data["result"].as_str().unwrap_or("").to_string();
+                
+                // Verify signature if present
+                if let Some(signature) = data["signature"].as_str() {
+                    if !verify_signature(&full_text, signature) {
+                        log_audit_event("storage_save", "failed", "signature verification failed during decrypt");
+                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"})));
+                    }
+                }
                 let old_pass = full_text.split('\n').next().unwrap_or("");
                 
                 // Replace marker with the old password
@@ -169,9 +206,11 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
     }
 
     let res_result = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&BunkerTask {
             payload: payload,
             mode: "encrypt".to_string(),
+            signature: None,
         })
         .send().await;
 
@@ -181,7 +220,17 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
                 Ok(d) => d,
                 Err(_) => json!({"result": ""}),
             };
-            let armored_gpg = data["result"].as_str().unwrap_or("");
+            let encrypted = data["result"].as_str().unwrap_or("").to_string();
+            
+            // Verify signature if present
+            if let Some(signature) = data["signature"].as_str() {
+                if !verify_signature(&encrypted, signature) {
+                    log_audit_event("storage_save", "failed", "signature verification failed during encrypt");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"})));
+                }
+            }
+            
+            let armored_gpg = encrypted;
             
             if armored_gpg.is_empty() {
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Encryption failed"})));
@@ -220,10 +269,13 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
 }
 
 pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
+    log_audit_event("storage_delete", "started", &format!("deleting path: {}", req.path));
+    
     if *DEBUG_MODE { println!("--> [STORAGE] DELETE request for: {}", req.path); }
 
     // Validate path to prevent traversal attacks
     if let Err(e) = validate_path(&req.path) {
+        log_audit_event("storage_delete", "failed", &format!("path validation failed: {}", e));
         return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
     }
 
@@ -308,8 +360,14 @@ pub async fn download_backup() -> impl IntoResponse {
                 }
             }
         }
+        
         let _ = zip_writer.finish();
     }
+    
+    // Calculate checksum after zip is complete
+    let checksum = format!("{:x}", Sha256::digest(&buf));
+
+    log_audit_event("storage_backup", "success", &format!("backup created with checksum: {}", checksum));
 
     (
         [
@@ -321,16 +379,49 @@ pub async fn download_backup() -> impl IntoResponse {
 }
 
 pub async fn restore_backup(mut multipart: Multipart) -> (StatusCode, Json<Value>) {
+    log_audit_event("storage_restore", "started", "restoring from backup");
+    
     if *DEBUG_MODE { println!("--> [STORAGE] RESTORE request initiated"); }
     
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         if field.name() == Some("backup") {
             let data = field.bytes().await.unwrap_or_default();
+            
+            // Verify integrity checksum
+            let expected_checksum = format!("{:x}", Sha256::digest(&data));
+            
             let reader = Cursor::new(data);
             let mut archive = match zip::ZipArchive::new(reader) {
                 Ok(a) => a,
-                Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid zip file"}))),
+                Err(_) => {
+                    log_audit_event("storage_restore", "failed", "invalid zip file");
+                    return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid zip file"})));
+                },
             };
+            
+            // Check for checksum file and verify
+            let mut found_checksum = false;
+            for i in 0..archive.len() {
+                if let Ok(mut file) = archive.by_index(i) {
+                    if file.name() == "SHA256_CHECKSUM.txt" {
+                        if let Ok(checksum_content) = std::io::read_to_string(&mut file) {
+                            found_checksum = true;
+                            // Extract just the checksum (remove any whitespace)
+                            let stored_checksum = checksum_content.trim();
+                            if stored_checksum != expected_checksum {
+                                log_audit_event("storage_restore", "failed", "integrity check failed - checksum mismatch");
+                                return (StatusCode::BAD_REQUEST, Json(json!({"error": "Integrity verification failed"})));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !found_checksum {
+                log_audit_event("storage_restore", "warning", "no checksum file found, proceeding without verification");
+            } else {
+                log_audit_event("storage_restore", "success", "integrity verification passed");
+            }
 
             let store_path = STORE_PATH.as_str();
             
@@ -373,7 +464,7 @@ pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoR
 
     // Check if the bunker is already initialized
     let check_res: serde_json::Value = client.post(format!("{}/process", bunker_url))
-        .json(&BunkerTask { payload: "".to_string(), mode: "check".to_string() })
+        .json(&BunkerTask { payload: "".to_string(), mode: "check".to_string(), signature: None })
         .send().await.unwrap().json().await.unwrap();
     
     if check_res["result"].as_str() != Some("UNINITIALIZED") {
@@ -385,6 +476,7 @@ pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoR
         .json(&BunkerTask {
             payload: req.key,
             mode: "initialize".to_string(),
+            signature: None,
         })
         .send().await;
 
@@ -477,6 +569,7 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
         .json(&BunkerTask {
             payload: req.key.clone(),
             mode: "unlock".to_string(),
+            signature: None,
         })
         .send().await;
 
@@ -494,6 +587,7 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
         .json(&BunkerTask {
             payload: test_payload.to_string(),
             mode: "encrypt".to_string(),
+            signature: None,
         })
         .send().await;
 
@@ -510,6 +604,7 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
         .json(&BunkerTask {
             payload: encrypted,
             mode: "decrypt".to_string(),
+            signature: None,
         })
         .send().await;
 

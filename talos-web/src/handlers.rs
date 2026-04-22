@@ -2,14 +2,16 @@ use axum::Json;
 use axum::extract::{ConnectInfo, Multipart, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::IntoResponse;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::io::{Cursor, Write};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use tower_sessions::Session;
 use zip::write::FileOptions;
 use crate::state::AppState;
+use crate::auth::validate_csrf_token;
 
 fn is_debug() -> bool {
     env::var("DEBUG").unwrap_or_default() == "true"
@@ -219,79 +221,92 @@ pub async fn proxy_backup(
 }
 
 pub async fn proxy_restore(
-    State(state): State<AppState>,
     session: Session,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     mut multipart: Multipart
 ) -> impl IntoResponse {
+    if is_debug() { println!("--> [WEB] RESTORE request received"); }
+
     let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
     if is_debug() { println!("--> [WEB] Processing RESTORE upload"); }
     
-    let ua_header = headers.get(header::USER_AGENT);
-    log_audit(&state, &session, Some(addr.ip()), ua_header, "RESTORE", "full_system").await;
-
+    // Validate CSRF token for state-changing operation
+    let mut csrf_token = None;
+    let mut backup_data = None;
+    
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() == Some("backup") {
-            let data = match field.bytes().await {
+        if field.name() == Some("csrf_token") {
+            csrf_token = field.text().await.ok();
+        } else if field.name() == Some("backup") {
+            backup_data = Some(match field.bytes().await {
                 Ok(b) => b,
                 Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Failed to read backup data"}))),
-            };
-            
-            // 1. Intentar abrir el ZIP
-            let reader = Cursor::new(&data);
-            let mut archive = match zip::ZipArchive::new(reader) {
-                Ok(a) => a,
-                Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid zip file"}))),
-            };
-
-            let mut secrets_payload: Option<Vec<u8>> = None;
-            let mut db_restored = false;
-
-            // 2. Find and restore talos.db (audit logs)
-            if let Ok(mut db_file) = archive.by_name("talos.db") {
-                let mut buf = Vec::new();
-                if std::io::copy(&mut db_file, &mut buf).is_ok() {
-                    // Overwrite the local DB.
-                    // NOTE: In a high-concurrency environment this is risky,
-                    // but for a personal tool it is acceptable.
-                    if std::fs::write("/data/talos.db", buf).is_ok() {
-                        println!("--> [WEB] talos.db restored successfully");
-                        db_restored = true;
-                    }
-                }
-            }
-
-            // 3. Find secrets.zip (The Storage backup)
-            if let Ok(mut secrets_file) = archive.by_name("secrets.zip") {
-                let mut buf = Vec::new();
-                if std::io::copy(&mut secrets_file, &mut buf).is_ok() {
-                    secrets_payload = Some(buf);
-                }
-            }
-
-            // 4. Determine what to send to Storage
-            // If there's no secrets.zip or talos.db, we assume it's an old (Legacy) backup containing only secrets
-            let payload_to_send = secrets_payload.unwrap_or_else(|| {
-                if db_restored { Vec::new() } else { data.to_vec() }
             });
-
-            if !payload_to_send.is_empty() {
-                let client = reqwest::Client::new();
-                let part = reqwest::multipart::Part::bytes(payload_to_send).file_name("backup.zip");
-                let form = reqwest::multipart::Form::new().part("backup", part);
-
-                if let Err(e) = client.post(format!("{}/api/restore", storage_url)).multipart(form).send().await {
-                     println!("❌ [WEB] Storage Restore Failed: {}", e);
-                     return (StatusCode::BAD_GATEWAY, Json(json!({"error": "Storage node unreachable"})));
-                }
-            }
-
-            return (StatusCode::OK, Json(json!({"status": "System restored. Please refresh."})));
         }
     }
     
-    (StatusCode::BAD_REQUEST, Json(json!({"error": "No backup file provided"})))
+    if let Some(token) = csrf_token.as_ref() {
+        if let Err(_) = validate_csrf_token(&session, token).await {
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "CSRF token validation failed"})));
+        }
+    } else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "CSRF token required"})));
+    }
+    
+    let data = match backup_data {
+        Some(d) => d,
+        None => return (StatusCode::BAD_REQUEST, Json(json!({"error": "No backup file provided"}))),
+    };
+    
+    // 1. Intentar abrir el ZIP
+    let reader = Cursor::new(&data);
+    let mut archive = match zip::ZipArchive::new(reader) {
+        Ok(a) => a,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid zip file"}))),
+    };
+
+    let mut secrets_payload: Option<Vec<u8>> = None;
+    let mut db_restored = false;
+
+    // 2. Find and restore talos.db (audit logs)
+    if let Ok(mut db_file) = archive.by_name("talos.db") {
+        let mut buf = Vec::new();
+        if std::io::copy(&mut db_file, &mut buf).is_ok() {
+            // Overwrite the local DB.
+            // NOTE: In a high-concurrency environment this is risky,
+            // but for a personal tool it is acceptable.
+            if std::fs::write("/data/talos.db", buf).is_ok() {
+                println!("--> [WEB] talos.db restored successfully");
+                db_restored = true;
+            }
+        }
+    }
+
+    // 3. Find secrets.zip (The Storage backup)
+    if let Ok(mut secrets_file) = archive.by_name("secrets.zip") {
+        let mut buf = Vec::new();
+        if std::io::copy(&mut secrets_file, &mut buf).is_ok() {
+            secrets_payload = Some(buf);
+        }
+    }
+
+    // 4. Determine what to send to Storage
+    // If there's no secrets.zip or talos.db, we assume it's an old (Legacy) backup containing only secrets
+    let payload_to_send = secrets_payload.unwrap_or_else(|| {
+        if db_restored { Vec::new() } else { data.to_vec() }
+    });
+
+    if !payload_to_send.is_empty() {
+        let client = reqwest::Client::new();
+        let part = reqwest::multipart::Part::bytes(payload_to_send).file_name("backup.zip");
+        let form = reqwest::multipart::Form::new().part("backup", part);
+
+        if let Err(e) = client.post(format!("{}/api/restore", storage_url)).multipart(form).send().await {
+             println!("❌ [WEB] Storage Restore Failed: {}", e);
+             return (StatusCode::BAD_GATEWAY, Json(json!({"error": "Storage node unreachable"})));
+        }
+    }
+
+    return (StatusCode::OK, Json(json!({"status": "System restored. Please refresh."})))
 }
 
 async fn proxy_request(url: &str, body: Option<Value>) -> (StatusCode, Json<Value>) {

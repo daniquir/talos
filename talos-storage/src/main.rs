@@ -17,6 +17,17 @@ async fn main() {
         panic!("GPG_ID cannot be empty");
     }
     println!("🔒 [STORAGE] GPG_ID configured: {}", gpg_id);
+    
+    // Ensure SHARED_SECRET is set for authentication
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_else(|_| {
+        println!("⚠️  WARNING: SHARED_SECRET not set, using default (INSECURE!)");
+        "changeme_in_production".to_string()
+    });
+    if shared_secret == "changeme_in_production" {
+        println!("⚠️  WARNING: Using default SHARED_SECRET - CHANGE IN PRODUCTION!");
+    } else {
+        println!("🔒 [STORAGE] Shared secret configured");
+    }
 
     println!("🌉 Initializing TALOS Storage...");
     init_storage().await;

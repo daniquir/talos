@@ -22,8 +22,8 @@ RUN chmod +x /app/talos-storage && \
     chmod +x /usr/local/bin/entrypoint.sh && \
     addgroup -g 1000 talos && \
     adduser -D -u 1000 -G talos talos && \
-    mkdir -p /home/talosuser/.password-store && \
-    chown -R talos:talos /app /home/talosuser
+    mkdir -p /home/talosuser/.password-store /home/talos/.ssh && \
+    chown -R talos:talos /app /home/talos /home/talosuser
 
 USER talos
 EXPOSE 4000

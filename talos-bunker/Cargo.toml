@@ -1,6 +1,6 @@
 [package]
 name = "talos-bunker"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 
@@ -15,3 +15,7 @@ uuid = { version = "1.0", features = ["v4"] }
 base64 = "0.22"
 zeroize = { version = "1.7", features = ["derive"] }
 tower-http = { version = "0.5", features = ["limit"] }
+chrono = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"

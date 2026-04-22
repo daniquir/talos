@@ -8,8 +8,10 @@ pub struct ActionRequest {
     pub reveal: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct BunkerTask {
     pub payload: String,
     pub mode: String,
+    #[serde(default)]
+    pub signature: Option<String>,
 }
