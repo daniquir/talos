@@ -57,8 +57,8 @@ pub async fn list_tree() -> Json<Vec<TreeNode>> {
 
 pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
     let file_path = format!("{}/{}.gpg", &*STORE_PATH, req.path);
-    if *DEBUG_MODE { println!("--> [STORAGE] DECRYPT request for: {}", req.path); }
-    let encrypted_content = fs::read_to_string(file_path).unwrap_or_else(|_| "".into());
+    let encrypted_bytes = fs::read(file_path).unwrap_or_else(|_| vec![]);
+    let encrypted_content = base64::encode(&encrypted_bytes);
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
 
     let client = reqwest::Client::new();

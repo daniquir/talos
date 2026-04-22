@@ -9,6 +9,7 @@ use tokio::io::AsyncWriteExt;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use uuid::Uuid;
+use base64;
 
 // In-Memory Vault for the Master Key. Never written to disk.
 pub static VAULT_KEY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
@@ -18,6 +19,7 @@ pub struct CryptTask {
     pub payload: String,
     pub mode: String,
     pub passphrase: Option<String>,
+    pub key_type: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -32,8 +34,6 @@ fn is_debug() -> bool {
 pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTask>) -> Json<CryptResponse> {
     let gpg_id = env::var("GPG_ID").unwrap_or_else(|_| "admin@talos.local".to_string());
     let mut args = vec!["--batch", "--pinentry-mode", "loopback"];
-    
-    if is_debug() { println!("--> [BUNKER] Processing GPG task: {}", req.mode); }
     
     match req.mode.as_str() {
         "check" => {
@@ -83,12 +83,20 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             }
 
             let passphrase = &req.payload;
+            let key_type = req.key_type.as_deref().unwrap_or("RSA");
             
-            // Generate key script
-            let gen_params = format!(
-                "Key-Type: RSA\nKey-Length: 4096\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
-                gpg_id, passphrase
-            );
+            // Generate key script based on key type
+            let gen_params = if key_type == "ed25519" {
+                format!(
+                    "Key-Type: ED25519\nKey-Curve: 25519\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
+                    gpg_id, passphrase
+                )
+            } else {
+                format!(
+                    "Key-Type: RSA\nKey-Length: 4096\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
+                    gpg_id, passphrase
+                )
+            };
             
             let child = Command::new("gpg")
                 .args(["--batch", "--generate-key"])
@@ -111,6 +119,16 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             
             if let Ok(s) = status {
                 if s.success() {
+                    // Set trust using interactive mode, redirect output to avoid interfering with JSON response
+                    let trust_script = format!(
+                        "echo -e \"trust\\n5\\ny\\n\" | gpg --batch --command-fd 0 --edit-key {} >/dev/null 2>&1",
+                        gpg_id
+                    );
+                    let _ = Command::new("sh")
+                        .args(["-c", &trust_script])
+                        .status()
+                        .await;
+                    
                     if let Ok(mut guard) = VAULT_KEY.lock() {
                         *guard = Some(passphrase.clone());
                     }
@@ -174,9 +192,9 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
 
         "decrypt" | "encrypt" => {
             if req.mode == "decrypt" {
-                args.push("-d");
+                args.extend(["-d", "--always-trust"]);
             } else {
-                args.extend(["-e", "-r", &gpg_id, "--armor"]); 
+                args.extend(["-e", "-r", &gpg_id, "--always-trust", "--armor"]); 
             }
 
             // Retrieve Key from Memory
@@ -205,6 +223,7 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
                 .args(final_args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn();
 
             let mut child = match child {
@@ -216,8 +235,16 @@ pub async fn process_gpg(State(_state): State<AppState>, Json(req): Json<CryptTa
             };
 
             let input = req.payload;
+            
+            // Decode base64 if the payload is base64 encoded (from storage)
+            let decoded_input = if base64::decode(&input).is_ok() {
+                base64::decode(&input).unwrap_or_else(|_| input.clone().into_bytes())
+            } else {
+                input.clone().into_bytes()
+            };
+            
             if let Some(mut stdin) = child.stdin.take() {
-                if let Err(_) = stdin.write_all(input.as_bytes()).await {
+                if let Err(_) = stdin.write_all(&decoded_input).await {
                     let _ = std::fs::remove_file(&pass_file);
                     return Json(CryptResponse { result: "ERROR_WRITE_STDIN".to_string() });
                 }
