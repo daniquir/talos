@@ -47,9 +47,6 @@ export const UI = {
             importPassphrase: document.getElementById('import-passphrase'),
             tabGenerate: document.getElementById('tab-generate'),
             tabImport: document.getElementById('tab-import'),
-            // Settings Elements
-            settingsModal: document.getElementById('settings-modal'),
-            btnCloseSettings: document.getElementById('btn-close-settings'),
             // Audit Elements
             auditModal: document.getElementById('audit-modal'),
             auditTableBody: document.getElementById('audit-table-body'),
@@ -67,9 +64,6 @@ export const UI = {
 
     openSetupModal() { this.elements.setupModal.classList.remove('hidden'); },
     closeSetupModal() { this.elements.setupModal.classList.add('hidden'); },
-
-    openSettingsModal() { this.elements.settingsModal.classList.remove('hidden'); },
-    closeSettingsModal() { this.elements.settingsModal.classList.add('hidden'); },
 
     openAuditModal() { this.elements.auditModal.classList.remove('hidden'); },
     closeAuditModal() { this.elements.auditModal.classList.add('hidden'); },

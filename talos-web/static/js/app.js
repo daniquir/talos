@@ -39,10 +39,6 @@ const App = {
             } catch (e) { UI.showNotification("Failed to fetch logs", "error"); }
         };
         UI.elements.btnCloseAudit.onclick = () => UI.closeAuditModal();
-        
-        // Settings & WebAuthn
-        document.getElementById('btn-settings').onclick = () => UI.openSettingsModal();
-        UI.elements.btnCloseSettings.onclick = () => UI.closeSettingsModal();
 
         // Entry Generator Logic
         const runEntryGen = () => {
