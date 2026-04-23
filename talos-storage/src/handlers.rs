@@ -460,10 +460,12 @@ pub struct InitializeRequest {
 pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoResponse {
     if *DEBUG_MODE { println!("--> [STORAGE] INITIALIZE request received"); }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
 
     // Check if the bunker is already initialized
     let check_res: serde_json::Value = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&BunkerTask { payload: "".to_string(), mode: "check".to_string(), signature: None })
         .send().await.unwrap().json().await.unwrap();
     
@@ -473,6 +475,7 @@ pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoR
 
     // Send Initialize Command
     let init_res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&BunkerTask {
             payload: req.key,
             mode: "initialize".to_string(),
@@ -502,11 +505,13 @@ pub struct ImportRequest {
 pub async fn import_bunker_key(Json(req): Json<ImportRequest>) -> impl IntoResponse {
     if *DEBUG_MODE { println!("--> [STORAGE] IMPORT KEY request received"); }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
 
     // Send Import Command to Bunker
     // We send the private key block and the passphrase to unlock/verify it
     let import_res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&json!({
             "mode": "import",
             "payload": req.key,
@@ -533,10 +538,12 @@ pub async fn backup_bunker_key() -> impl IntoResponse {
 
     if *DEBUG_MODE { println!("--> [STORAGE] BACKUP KEY request"); }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
 
     // Request export from Bunker
     let res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&json!({ "mode": "export_key", "payload": "" }))
         .send().await;
 
@@ -560,12 +567,13 @@ pub struct UnlockRequest {
 }
 
 pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse {
-    if *DEBUG_MODE { println!("--> [STORAGE] UNLOCK request received"); }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
 
     // 1. Send Unlock Command (Inject Key into Bunker RAM)
     let unlock_res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&BunkerTask {
             payload: req.key.clone(),
             mode: "unlock".to_string(),
@@ -584,6 +592,7 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
     
     // A. Encrypt
     let enc_res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&BunkerTask {
             payload: test_payload.to_string(),
             mode: "encrypt".to_string(),
@@ -594,13 +603,17 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
     let encrypted = match enc_res {
         Ok(res) if res.status().is_success() => {
             let data: serde_json::Value = res.json().await.unwrap_or_default();
-            data["result"].as_str().unwrap_or("").to_string()
+            let result = data["result"].as_str().unwrap_or("").to_string();
+            result
         },
-        _ => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Key rejected (Encryption failed)"})))
+        _ => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Key rejected (Encryption failed)"})))
+        }
     };
 
     // B. Decrypt
     let dec_res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&BunkerTask {
             payload: encrypted,
             mode: "decrypt".to_string(),
@@ -642,9 +655,11 @@ fn commit_changes(msg: &str) {
 pub async fn storage_health_check() -> Json<Value> {
     let client = reqwest::Client::new();
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     
     // Storage communicates with Bunker over the isolated private network
     let bunker_res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
         .json(&json!({"payload":"", "mode":"check"}))
         .send().await;
 

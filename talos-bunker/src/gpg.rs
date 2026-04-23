@@ -4,6 +4,7 @@ use axum::http::HeaderMap;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::fs;
 use std::process::Stdio;
 use tokio::process::Command;
 use tokio::io::AsyncWriteExt;
@@ -33,10 +34,6 @@ pub struct CryptTask {
 pub struct CryptResponse {
     pub result: String,
     pub signature: Option<String>,
-}
-
-fn is_debug() -> bool {
-    env::var("DEBUG").unwrap_or_default() == "true"
 }
 
 fn log_audit_event(action: &str, status: &str, details: &str) {
@@ -194,6 +191,7 @@ pub async fn process_gpg(State(_state): State<AppState>, headers: HeaderMap, Jso
         "import" => {
             let key_data = req.payload;
             let passphrase = req.passphrase.unwrap_or_default();
+            let gpg_id = env::var("GPG_ID").unwrap_or_default();
 
             let child = Command::new("gpg")
                 .args(["--batch", "--import"])
@@ -257,13 +255,6 @@ pub async fn process_gpg(State(_state): State<AppState>, headers: HeaderMap, Jso
                 Err(_) => return Json(CryptResponse { result: "ERROR_LOCK_FAILED".to_string(), signature: None }),
             };
 
-            let mut final_args = vec!["--batch", "--pinentry-mode", "loopback"];
-            if req.mode == "decrypt" {
-                final_args.push("-d");
-            } else {
-                final_args.extend(["-e", "-r", &gpg_id, "--armor"]);
-            }
-
             let input = req.payload;
 
             // Decode base64 if the payload is base64 encoded (from storage)
@@ -271,6 +262,23 @@ pub async fn process_gpg(State(_state): State<AppState>, headers: HeaderMap, Jso
                 Ok(decoded) => decoded,
                 Err(_) => input.into_bytes(),
             };
+
+            // Create temporary file for passphrase (less secure but works)
+            let passphrase_file = "/tmp/gpg_passphrase";
+            if let Err(_) = fs::write(passphrase_file, &passphrase) {
+                let mut p = passphrase;
+                p.zeroize();
+                return Json(CryptResponse { result: "ERROR_WRITE_PASSPHRASE_FILE".to_string(), signature: None });
+            }
+            let mut p = passphrase;
+            p.zeroize();
+
+            let mut final_args = vec!["--batch", "--pinentry-mode", "loopback", "--passphrase-file", passphrase_file, "--trust-model", "always"];
+            if req.mode == "decrypt" {
+                final_args.push("-d");
+            } else {
+                final_args.extend(["-e", "-r", &gpg_id, "--armor"]);
+            }
 
             // Spawn GPG with stdin piped
             let child = Command::new("gpg")
@@ -283,32 +291,31 @@ pub async fn process_gpg(State(_state): State<AppState>, headers: HeaderMap, Jso
             let mut child = match child {
                 Ok(c) => c,
                 Err(_) => {
-                    // Zeroize passphrase before returning
-                    let mut p = passphrase;
-                    p.zeroize();
+                    let _ = fs::remove_file(passphrase_file);
                     return Json(CryptResponse { result: "ERROR_SPAWN".to_string(), signature: None });
                 },
             };
 
-            // Write passphrase to GPG via stdin (more secure than file)
+            // Write the payload to encrypt/decrypt
             if let Some(mut stdin) = child.stdin.take() {
-                if let Err(_) = stdin.write_all(&passphrase).await {
-                    let mut p = passphrase;
-                    p.zeroize();
-                    return Json(CryptResponse { result: "ERROR_WRITE_PASSPHRASE".to_string(), signature: None });
+                if let Err(_) = stdin.write_all(&_decoded_input).await {
+                    let _ = fs::remove_file(passphrase_file);
+                    return Json(CryptResponse { result: "ERROR_WRITE_PAYLOAD".to_string(), signature: None });
                 }
-                // Zeroize passphrase immediately after use
-                let mut p = passphrase;
-                p.zeroize();
                 drop(stdin);
             }
 
             let output = child.wait_with_output().await;
             
+            // Clean up passphrase file
+            let _ = fs::remove_file(passphrase_file);
+            
             match output {
                 Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
                     log_audit_event(&format!("gpg_{}", req.mode), "success", "operation completed");
-                    let result = String::from_utf8_lossy(&o.stdout).to_string();
+                    let result = stdout;
                     let signature = sign_response(&result);
                     Json(CryptResponse { result, signature: Some(signature) })
                 },
