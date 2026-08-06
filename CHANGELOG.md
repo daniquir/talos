@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - GPG trust model set to `always` within the isolated Bunker environment
 - UI sizing via root `font-size` (`--ui-scale`) instead of CSS `zoom`/`transform`, so layout, scroll, and overlays stay correct while the interface stays larger
 - Session cookies allow non-Secure over HTTP when `DEBUG=true` (local development only)
+- Release workflow: pushing a `v*` tag now creates the GitHub Release and then builds/pushes Docker Hub images
 
 ### Fixed
 - Sidebar vault tree scroll when many categories are expanded and the folder list exceeds the panel height
