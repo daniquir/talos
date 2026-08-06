@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-08-06
+
+### Added
+- Shared secret authentication (`X-Talos-Auth`) on bunker initialize and status checks from Storage
+- Local development stack (`docker-compose.dev.yaml`, `dev/scripts`, sample fixtures) for faster UI/API validation
+
+### Changed
+- GPG passphrase handling: passphrases are written to a temporary file, zeroized in memory, and removed immediately after use
+- GPG trust model set to `always` within the isolated Bunker environment
+- UI sizing via root `font-size` (`--ui-scale`) instead of CSS `zoom`/`transform`, so layout, scroll, and overlays stay correct while the interface stays larger
+- Session cookies allow non-Secure over HTTP when `DEBUG=true` (local development only)
+
+### Fixed
+- Sidebar vault tree scroll when many categories are expanded and the folder list exceeds the panel height
+- Context menu positioning and layout: removed body `scale`/`zoom` that shifted the whole UI and misplaced overlays; aligned menu icons inside each option
+- Tree expand arrows and folder/file icons after rem-based UI scaling (replaced broken jsTree sprite with SVG icons)
+
 ## [1.1.0] - 2025-04-22
 ### Security Hardening Release
 This release implements comprehensive security improvements following a full security audit.

@@ -27,14 +27,20 @@ async fn main() {
     };
 
     // 3. Configure session layer
+    // In DEBUG mode, allow cookies over plain HTTP for local development.
+    let debug_mode = env::var("DEBUG").unwrap_or_default() == "true";
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(true) // Secure cookie for HTTPS
+        .with_secure(!debug_mode) // Secure cookies required outside DEBUG (HTTPS)
         .with_http_only(true) // Prevent JavaScript access to cookies
         .with_same_site(tower_sessions::cookie::SameSite::Strict) // CSRF protection
         .with_expiry(Expiry::OnInactivity(Duration::hours(2))); // Increased timeout for military operations
 
-    println!("🔒 [SYSTEM] SECURE MODE ACTIVE: Authentication required.");
+    if debug_mode {
+        println!("⚠️  [SYSTEM] DEBUG MODE: HTTP session cookies enabled (dev only).");
+    } else {
+        println!("🔒 [SYSTEM] SECURE MODE ACTIVE: Authentication required.");
+    }
 
     // API routes that require authentication
     let api_router = Router::new()

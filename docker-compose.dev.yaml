@@ -1,0 +1,34 @@
+# Development overrides — use with:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml --env-file .env.dev up --build -d
+#
+# Or via helper: ./dev/scripts/dev-up.sh
+
+services:
+  talos-web:
+    environment:
+      - DEBUG=true
+      - DATABASE_URL=sqlite:/data/talos.db
+    volumes:
+      - ./data-dev/web:/data:z
+    ports:
+      - "3000:3000"
+      - "3443:3443"
+
+  talos-storage:
+    environment:
+      - DEBUG=true
+      - GPG_ID=${GPG_ID:-dev@talos.local}
+      - SHARED_SECRET=${SHARED_SECRET:-talos_dev_secret}
+    volumes:
+      - ./data-dev/password-store:/home/talosuser/.password-store:rw,z
+      - ./dev/config:/app/config:ro,z
+      - ./data-dev/ssh/id_rsa_talos:/run/secrets/id_rsa_talos:ro,z
+
+  talos-bunker:
+    environment:
+      - DEBUG=true
+      - GPG_ID=${GPG_ID:-dev@talos.local}
+      - SHARED_SECRET=${SHARED_SECRET:-talos_dev_secret}
+    volumes:
+      # Persist GPG keys so restarts keep the vault initialized (still SEALED until login)
+      - ./data-dev/bunker-gnupg:/home/talos/.gnupg:rw,z
