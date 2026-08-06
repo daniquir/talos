@@ -113,6 +113,20 @@ This mode stores secrets only in the local Docker volume. You are responsible fo
 3. **Access Interface**
    Open `http://localhost:3000` in your browser.
 
+### Local development (sample data)
+
+For faster iteration with a known master key and seeded secrets:
+
+```bash
+cp -n .env.dev.example .env.dev
+./dev/scripts/dev-up.sh
+```
+
+- UI: `http://localhost:3000`
+- Master key: `DevMasterKey-ChangeMe!`
+
+See [dev/README.md](dev/README.md) for reset/seed scripts and the validation checklist.
+
 ## 🔐 Security Protocols
 
 ### v1.1.0 Security Enhancements

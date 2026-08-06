@@ -5,6 +5,7 @@ Cargo.lock
 
 # --- Docker & Logs ---
 .env
+.env.dev
 *.log
 docker-compose.override.yml
 
@@ -21,8 +22,9 @@ docker-compose.override.yml
 **/.password-store/
 **/keys/
 **/certs/
-**/config/
-**/data/
+/config/
+/data/
+/data-dev/
 
 # --- Database ---
 *.db
