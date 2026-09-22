@@ -87,6 +87,25 @@ export const API = {
         return await res.json();
     },
 
+    async fetchSettings() {
+        const res = await fetch('/api/settings');
+        if (!res.ok) throw new Error(res.statusText);
+        return await res.json();
+    },
+
+    async updateSettings(patch) {
+        const res = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch || {})
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || res.statusText || 'Settings update failed');
+        }
+        return await res.json();
+    },
+
     async fetchAuditLogs() {
         const res = await fetch('/api/audit');
         return await res.json();

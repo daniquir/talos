@@ -34,6 +34,7 @@ Then open http://localhost:3000 and log in with:
 | `./dev/scripts/dev-seed.sh --force` | Seed again even if tree is not empty |
 | `./dev/scripts/dev-reset.sh` | Wipe `data-dev` and rebootstrap |
 | `./dev/scripts/dev-down.sh` | Stop the stack |
+| `./dev/scripts/serve-fake-login.sh` | Serve fake login at `http://127.0.0.1:8765/` (extension autofill) |
 
 ## Manual compose
 
@@ -52,6 +53,7 @@ After `dev-up.sh`:
 4. Create / edit / delete a secret
 5. Restart bunker (`docker restart talos-bunker`) → UI shows sealed → login unseals again
 6. Backup / restore from the UI if needed
+7. Optional: `./dev/scripts/serve-fake-login.sh` + extension lab (autofill multi-match + Save/Update capture pages on `:8765`)
 
 ## Smoke via API
 
@@ -64,4 +66,4 @@ curl -s http://localhost:3000/api/health
 
 - Sample passwords in `fixtures/secrets.json` are fake and intended for local testing only.
 - On Fedora/SELinux, `dev-up.sh` tries to label `data-dev` for container mounts (`:z` is also set in compose.dev).
-- Production deploy remains: `docker compose up --build -d` with your own `.env` and `config/`.
+- Production on kanda-server: [docs/PRODUCTION.md](../docs/PRODUCTION.md) (`docker-compose.prod.yaml`, no bundled Keycloak).

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Success</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Done</h1>
+    <p class="lede" id="msg">Action completed (fake).</p>
+    <p class="hint">If capture used pagehide, the doorhanger may have appeared on the previous page or briefly here via session restore.</p>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const mode = params.get("mode") || "ok";
+    const user = params.get("user") || "";
+    document.getElementById("msg").textContent = user
+      ? `${mode} completed for ${user}.`
+      : `${mode} completed.`;
+  </script>
+</body>
+</html>

@@ -11,10 +11,92 @@ use std::sync::{Arc, Mutex};
 use tower_sessions::Session;
 use zip::write::FileOptions;
 use crate::state::AppState;
-use crate::auth::validate_csrf_token;
+use crate::auth::{validate_csrf_token, check_match_rate_limit, generate_csrf_token};
+use crate::user_proxy::user_headers;
 
 fn is_debug() -> bool {
     env::var("DEBUG").unwrap_or_default() == "true"
+}
+
+async fn session_user_sub(session: &Session) -> Option<String> {
+    session.get::<String>("user_sub").await.ok().flatten()
+}
+
+fn bearer_from(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+}
+
+async fn resolve_user_sub(
+    state: &AppState,
+    session: &Session,
+    headers: &HeaderMap,
+) -> Option<String> {
+    if let Some(token) = bearer_from(headers) {
+        if let Some(entry) = state.token_entry(token) {
+            return entry.user_sub;
+        }
+    }
+    session_user_sub(session).await
+}
+
+async fn proxy_request_with_user(
+    url: &str,
+    body: Option<Value>,
+    user_sub: Option<&str>,
+) -> (StatusCode, Json<Value>) {
+    let client = reqwest::Client::new();
+    let mut req = if let Some(b) = body {
+        client.post(url).json(&b)
+    } else {
+        client.get(url)
+    };
+    for (k, v) in user_headers(user_sub) {
+        req = req.header(k, v);
+    }
+    match req.send().await {
+        Ok(res) => {
+            let status = res.status();
+            let data = match res.json::<Value>().await {
+                Ok(d) => d,
+                Err(_) => json!({"error": "Invalid node response"}),
+            };
+            if !status.is_success() {
+                println!("⚠️ [WEB] Proxy Error [{}]: {:?}", status, data);
+            }
+            let status_code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            (status_code, Json(data))
+        }
+        Err(e) => {
+            println!("❌ [WEB] Node Unreachable: {}", e);
+            (StatusCode::BAD_GATEWAY, Json(json!({"error": "Node unreachable"})))
+        }
+    }
+}
+
+async fn proxy_request_post_empty_user(url: &str, user_sub: Option<&str>) -> (StatusCode, Json<Value>) {
+    let client = reqwest::Client::new();
+    let mut req = client.post(url);
+    for (k, v) in user_headers(user_sub) {
+        req = req.header(k, v);
+    }
+    match req.send().await {
+        Ok(res) => {
+            let status = res.status();
+            let data = match res.json::<Value>().await {
+                Ok(d) => d,
+                Err(_) => json!({"error": "Invalid node response"}),
+            };
+            let status_code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            (status_code, Json(data))
+        }
+        Err(e) => {
+            println!("❌ [WEB] Node Unreachable: {}", e);
+            (StatusCode::BAD_GATEWAY, Json(json!({"error": "Node unreachable"})))
+        }
+    }
 }
 
 pub async fn get_version() -> Json<Value> {
@@ -39,11 +121,66 @@ pub async fn health_check() -> Json<Value> {
     }
 }
 
-pub async fn proxy_list_tree() -> impl IntoResponse {
+pub async fn proxy_list_tree(
+    State(state): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+) -> impl IntoResponse {
     let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
     if is_debug() { println!("--> [WEB] Proxying LIST TREE"); }
-    proxy_request(&format!("{}/api/tree", storage_url), None).await
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&format!("{}/api/tree", storage_url), None, sub.as_deref()).await
 }
+
+pub async fn proxy_match(
+    State(state): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    if !check_match_rate_limit(addr.ip(), &state.match_rate_limiter) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "Too many match requests. Please wait."})),
+        );
+    }
+    let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
+    let host = params.get("host").cloned().unwrap_or_default();
+    if is_debug() { println!("--> [WEB] Proxying MATCH host={}", host); }
+
+    let url = format!(
+        "{}/api/match?host={}",
+        storage_url,
+        urlencoding_encode(&host)
+    );
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&url, None, sub.as_deref()).await
+}
+
+pub async fn proxy_reindex(
+    State(state): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
+    if is_debug() { println!("--> [WEB] Proxying MATCH REINDEX"); }
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_post_empty_user(&format!("{}/api/match/reindex", storage_url), sub.as_deref()).await
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+
 
 pub async fn log_audit(
     state: &AppState,
@@ -104,7 +241,8 @@ pub async fn proxy_decrypt(
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "DECRYPT", path).await;
 
-    proxy_request(&format!("{}/api/decrypt", storage_url), Some(body)).await
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&format!("{}/api/decrypt", storage_url), Some(body), sub.as_deref()).await
 }
 
 pub async fn proxy_save(
@@ -121,7 +259,8 @@ pub async fn proxy_save(
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "SAVE", path).await;
 
-    proxy_request(&format!("{}/api/save", storage_url), Some(body)).await
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&format!("{}/api/save", storage_url), Some(body), sub.as_deref()).await
 }
 
 pub async fn proxy_delete(
@@ -138,7 +277,8 @@ pub async fn proxy_delete(
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "DELETE", path).await;
 
-    proxy_request(&format!("{}/api/delete", storage_url), Some(body)).await
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&format!("{}/api/delete", storage_url), Some(body), sub.as_deref()).await
 }
 
 pub async fn proxy_create_category(
@@ -155,7 +295,8 @@ pub async fn proxy_create_category(
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "CREATE_CATEGORY", path).await;
 
-    proxy_request(&format!("{}/api/create_category", storage_url), Some(body)).await
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&format!("{}/api/create_category", storage_url), Some(body), sub.as_deref()).await
 }
 
 pub async fn proxy_initialize(
@@ -169,7 +310,32 @@ pub async fn proxy_initialize(
     if is_debug() { println!("--> [WEB] Proxying INITIALIZE"); }
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "INITIALIZE", "system").await;
-    proxy_request(&format!("{}/api/initialize", storage_url), Some(body)).await
+    let mut body = body;
+    let sub = session_user_sub(&session).await;
+    if state.oidc.enabled && sub.is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Sign in with Keycloak before initializing your vault"})),
+        )
+            .into_response();
+    }
+    if let (Some(obj), Some(s)) = (body.as_object_mut(), &sub) {
+        obj.insert("user_sub".into(), json!(s));
+    }
+    let (status, Json(resp)) =
+        proxy_request_with_user(&format!("{}/api/initialize", storage_url), Some(body), sub.as_deref()).await;
+    if status.is_success() {
+        // Initialize also unseals the bunker for this user — mark session ready.
+        session.insert("vault_unlocked", true).await.ok();
+        session.insert("authenticated", true).await.ok();
+        if state.oidc.enabled {
+            session.insert("auth_method", "oidc+vault").await.ok();
+        } else {
+            session.insert("auth_method", "password").await.ok();
+        }
+        let _ = generate_csrf_token(&session).await;
+    }
+    (status, Json(resp)).into_response()
 }
 
 pub async fn proxy_backup(
@@ -185,9 +351,15 @@ pub async fn proxy_backup(
 
     let ua_header = headers.get(header::USER_AGENT);
     log_audit(&state, &session, Some(addr.ip()), ua_header, "BACKUP", "full_system").await;
+
+    let sub = session_user_sub(&session).await;
+    let mut req = client.get(format!("{}/api/backup", storage_url));
+    for (k, v) in user_headers(sub.as_deref()) {
+        req = req.header(k, v);
+    }
     
     // 1. Obtener el backup de secretos (ZIP) del Storage
-    match client.get(format!("{}/api/backup", storage_url)).send().await {
+    match req.send().await {
         Ok(res) => {
             let secrets_zip_bytes = res.bytes().await.unwrap_or_default();
             
@@ -307,32 +479,4 @@ pub async fn proxy_restore(
     }
 
     return (StatusCode::OK, Json(json!({"status": "System restored. Please refresh."})))
-}
-
-async fn proxy_request(url: &str, body: Option<Value>) -> (StatusCode, Json<Value>) {
-    let client = reqwest::Client::new();
-    let req = if let Some(b) = body { 
-        client.post(url).json(&b) 
-    } else { 
-        client.get(url) 
-    };
-    
-    match req.send().await {
-        Ok(res) => {
-            let status = res.status();
-            let data = match res.json::<Value>().await {
-                Ok(d) => d,
-                Err(_) => json!({"error": "Invalid node response"}),
-            };
-            if !status.is_success() {
-                println!("⚠️ [WEB] Proxy Error [{}]: {:?}", status, data);
-            }
-            let status_code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-            (status_code, Json(data))
-        },
-        Err(e) => {
-            println!("❌ [WEB] Node Unreachable: {}", e);
-            (StatusCode::BAD_GATEWAY, Json(json!({"error": "Node unreachable"})))
-        }
-    }
 }

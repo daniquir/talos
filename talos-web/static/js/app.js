@@ -1,11 +1,31 @@
 import { API } from './api.js';
 import { UI } from './ui.js';
+import { applyDom, getLangPref, initI18n, setLangPref, t } from './i18n.js';
 
 const App = {
     sessionTimeout: 900, // 15 minutes in seconds
     sessionTimer: null,
 
     async init() {
+        await initI18n();
+        const langSelect = document.getElementById('lang-select');
+        if (langSelect) {
+            langSelect.value = getLangPref();
+            const onLangChange = async () => {
+                await setLangPref(langSelect.value, { syncServer: true });
+                const authText = document.getElementById('auth-text');
+                if (authText && !document.getElementById('auth-indicator')?.classList.contains('hidden')) {
+                    const method = authText.dataset.method;
+                    if (method) UI.setAuthMethod(method);
+                }
+            };
+            langSelect.addEventListener('change', onLangChange);
+            langSelect.addEventListener('input', onLangChange);
+            window.addEventListener('talos:lang', () => {
+                langSelect.value = getLangPref();
+            });
+        }
+
         UI.init();
         // Initialize Lucide icons (ignoring TS warning for global library)
         // @ts-ignore
@@ -36,7 +56,7 @@ const App = {
                 const logs = await API.fetchAuditLogs(); // This now goes to /api/audit
                 UI.renderAuditLogs(logs);
                 UI.openAuditModal();
-            } catch (e) { UI.showNotification("Failed to fetch logs", "error"); }
+            } catch (e) { UI.showNotification(t('notif_fetch_logs_fail'), "error"); }
         };
         UI.elements.btnCloseAudit.onclick = () => UI.closeAuditModal();
 
@@ -87,20 +107,31 @@ const App = {
                 this.handleCopyPassword(node.data.path);
             }
         });
+
+        window.addEventListener('talos:lang', () => applyDom());
     },
 
     async checkAuthStatus() {
         try {
             const status = await API.fetchAuthStatus();
-            if (!status.initialized) {
-                this.initSetupMode();
+            const params = new URLSearchParams(window.location.search);
+            if (params.get("oidc_error")) {
+                UI.showNotification(params.get("oidc_error"), "error");
+            }
+            // Per-user: after Keycloak, an empty vault must go through setup — not unlock.
+            if (status.oidc_enabled && status.oidc_authenticated && !status.initialized) {
+                this.initSetupMode(status);
+            } else if (!status.initialized) {
+                this.initSetupMode(status);
             } else if (!status.authenticated) {
-                this.initLoginMode();
+                this.initLoginMode(status);
             } else {
-                // Authenticated: Show method
                 UI.setAuthMethod(status.auth_method);
                 this.startSessionTimer();
                 this.loadFiles();
+            }
+            if (params.get("need_vault_unlock") || params.get("oidc_error")) {
+                window.history.replaceState({}, "", "/");
             }
         } catch (e) {
             console.error("Auth check failed", e);
@@ -136,8 +167,19 @@ const App = {
         this.sessionTimer = setInterval(updateDisplay, 1000);
     },
 
-    initSetupMode() {
+    initSetupMode(status = {}) {
+        // Keep existing setup; when OIDC, require identity first for per-user init
+        if (status.oidc_enabled && !status.oidc_authenticated) {
+            this.initLoginMode(status);
+            return;
+        }
         UI.openSetupModal();
+
+        const oidc = !!(status.oidc_enabled && status.oidc_authenticated);
+        const lede = document.querySelector('#setup-modal [data-i18n="genesis_lede"]');
+        const keyLabel = document.querySelector('#setup-modal [data-i18n="label_master_key"]');
+        if (lede) lede.textContent = oidc ? t("genesis_lede_oidc") : t("genesis_lede");
+        if (keyLabel) keyLabel.textContent = oidc ? t("label_vault_passphrase") : t("label_master_key");
         
         // Setup Generator Logic
         const runGen = () => {
@@ -183,22 +225,22 @@ const App = {
             
             // Disable UI to prevent double submission
             btn.disabled = true;
-            btn.innerText = "INITIALIZING...";
+            btn.innerText = t("btn_initializing");
 
             // Auto-copy to clipboard
             try {
                 await navigator.clipboard.writeText(key);
-                UI.showNotification("KEY COPIED TO CLIPBOARD", "success");
+                UI.showNotification(t("notif_key_copied"), "success");
             } catch (c) { console.error(c); }
 
             try {
                 await API.initializeSystem(key);
-                UI.showNotification("SYSTEM INITIALIZED. RELOADING...", "success");
+                UI.showNotification(t("notif_initialized"), "success");
                 setTimeout(() => window.location.reload(), 2000);
             } catch (err) {
-                UI.showNotification("INITIALIZATION FAILED: " + err.message, "error");
+                UI.showNotification(t("notif_init_fail", { error: err.message }), "error");
                 btn.disabled = false;
-                btn.innerText = "INITIALIZE SYSTEM";
+                btn.innerText = t("btn_initialize");
             }
         };
 
@@ -208,34 +250,81 @@ const App = {
             const privateKey = UI.elements.importKey.value;
             const passphrase = UI.elements.importPassphrase.value;
             if (!privateKey) {
-                UI.showNotification("Please provide the GPG private key.", "error");
+                UI.showNotification(t("notif_need_gpg"), "error");
                 return;
             }
             btn.disabled = true;
-            btn.innerText = "IMPORTING...";
+            btn.innerText = t("btn_importing");
             try {
                 await API.importSystem(privateKey, passphrase);
-                UI.showNotification("SYSTEM IMPORTED. RELOADING...", "success");
+                UI.showNotification(t("notif_imported"), "success");
                 setTimeout(() => window.location.reload(), 2000);
             } catch (err) {
-                UI.showNotification("IMPORT FAILED: " + err.message, "error");
+                UI.showNotification(t("notif_import_fail", { error: err.message }), "error");
                 btn.disabled = false;
-                btn.innerText = "IMPORT KEY & INITIALIZE";
+                btn.innerText = t("btn_import_init");
             }
         };
     },
 
-    initLoginMode() {
+    initLoginMode(status = {}) {
         UI.openLoginModal();
+        const oidcBtn = document.getElementById("btn-oidc-login");
+        const oidcHint = document.getElementById("login-oidc-hint");
+        const keyInput = UI.elements.loginKey;
+        const oidcReady = !!(status.oidc_enabled && status.oidc_authenticated);
+        if (keyInput) {
+            keyInput.placeholder = oidcReady ? t("ph_vault_passphrase") : t("ph_master_key");
+            keyInput.setAttribute("data-i18n-placeholder", oidcReady ? "ph_vault_passphrase" : "ph_master_key");
+        }
+        if (status.oidc_enabled) {
+            if (oidcBtn) oidcBtn.classList.remove("hidden");
+            if (!status.oidc_authenticated) {
+                if (oidcHint) oidcHint.classList.add("hidden");
+                if (keyInput) {
+                    keyInput.classList.add("hidden");
+                    keyInput.required = false;
+                }
+                const submit = UI.elements.loginForm?.querySelector('button[type="submit"]');
+                if (submit) submit.classList.add("hidden");
+            } else {
+                if (oidcBtn) oidcBtn.classList.add("hidden");
+                if (oidcHint) oidcHint.classList.remove("hidden");
+                if (keyInput) {
+                    keyInput.classList.remove("hidden");
+                    keyInput.required = true;
+                }
+                const submit = UI.elements.loginForm?.querySelector('button[type="submit"]');
+                if (submit) submit.classList.remove("hidden");
+            }
+        }
         UI.elements.loginForm.onsubmit = async (e) => {
             e.preventDefault();
-            const key = UI.elements.loginKey.value;
+            const btn = UI.elements.loginForm.querySelector('button[type="submit"]');
+            if (btn?.disabled) return;
+
+            const key = keyInput.value;
+            if (!key) return;
+
+            const label = btn ? btn.textContent : t("btn_unlock_vault");
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = t("btn_unlocking");
+            }
+            keyInput.disabled = true;
+
             try {
                 await API.login(key);
-                window.location.reload();
+                window.location.href = "/";
             } catch (err) {
-                UI.showNotification("ACCESS DENIED", "error");
-                UI.elements.loginKey.value = '';
+                UI.showNotification(t("notif_access_denied"), "error");
+                keyInput.value = '';
+                keyInput.disabled = false;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = label || t("btn_unlock_vault");
+                }
+                keyInput.focus();
             }
         };
     },
@@ -284,7 +373,7 @@ const App = {
 
         if (node.data.is_dir) {
             items.newSecret = {
-                label: "New Secret",
+                label: t("ctx_new_secret"),
                 icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/key.svg",
                 action: () => {
                     UI.clearForm();
@@ -293,16 +382,16 @@ const App = {
                 }
             };
             items.newCategory = {
-                label: "New Sub-category",
+                label: t("ctx_new_subcategory"),
                 icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/folder-plus.svg",
                 action: () => {
-                    const name = prompt("Enter new sub-category name:");
+                    const name = prompt(t("prompt_subcategory"));
                     if (name) this.handleNewCategory(`${node.data.path}/${name}`);
                 }
             };
         } else { // It's a file
             items.editSecret = {
-                label: "Edit",
+                label: t("ctx_edit"),
                 icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/file-edit.svg",
                 action: async () => {
                     const content = await API.decrypt(node.data.path);
@@ -315,10 +404,10 @@ const App = {
         }
 
         items.delete = {
-            label: "Delete",
+            label: t("ctx_delete"),
             icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/trash-2.svg",
             action: () => this.executeSafe(() => {
-                if (confirm(`DELETE ${node.data.path} PERMANENTLY?`)) {
+                if (confirm(t("confirm_delete", { path: node.data.path }))) {
                     this.handleDelete(node.data.path);
                 }
             })
@@ -333,10 +422,10 @@ const App = {
                 const data = await API.decrypt(path);
                 const content = typeof data === 'string' ? data : JSON.stringify(data);
                 UI.renderSecretView(path, content);
-                UI.elements.header.innerText = `OPEN: ${path}`;
+                UI.elements.header.innerText = t("status_open", { path });
             } catch (err) {
-                UI.showNotification("ERROR: " + err.message, "error");
-                UI.elements.header.innerText = "ERROR";
+                UI.showNotification(t("notif_error", { error: err.message }), "error");
+                UI.elements.header.innerText = t("status_error");
             }
         });
     },
@@ -349,7 +438,7 @@ const App = {
                 if (password) {
                     await navigator.clipboard.writeText(password);
                     const originalText = UI.elements.header.innerText;
-                    UI.elements.header.innerText = `COPIED: ${path}`;
+                    UI.elements.header.innerText = t("status_copied", { path });
                     UI.elements.header.classList.remove('text-zinc-600');
                     UI.elements.header.classList.add('text-green-400');
                     setTimeout(() => {
@@ -360,7 +449,7 @@ const App = {
                 }
             } catch (err) {
                 console.error(err);
-                UI.showNotification("Failed to copy password: " + err.message, "error");
+                UI.showNotification(t("notif_copy_fail", { error: err.message }), "error");
             }
         });
     },
@@ -371,7 +460,7 @@ const App = {
             try {
                 const { path, content, original_path } = UI.getFormData();
                 if (!path || path.endsWith('/')) {
-                    UI.showNotification("ERROR: A name for the secret is required.", "error");
+                    UI.showNotification(t("notif_need_name"), "error");
                     return;
                 }
 
@@ -379,7 +468,7 @@ const App = {
                 UI.closeModal();
                 this.loadFiles();
             } catch (err) {
-                UI.showNotification("ERROR SAVING: " + err.message, "error");
+                UI.showNotification(t("notif_save_fail", { error: err.message }), "error");
             }
         });
     },
@@ -387,11 +476,11 @@ const App = {
     async handleDelete(path) {
         try {
             await API.delete(path);
-            UI.elements.header.innerText = 'IDLE_SYSTEM';
+            UI.elements.header.innerText = t('idle_system');
             UI.elements.viewer.innerText = '';
             this.loadFiles();
         } catch (err) {
-            UI.showNotification("ERROR DELETING: " + err.message, "error");
+            UI.showNotification(t("notif_delete_fail", { error: err.message }), "error");
         }
     },
 
@@ -400,13 +489,13 @@ const App = {
         if (!file) return;
         
         this.executeSafe(async () => {
-            if (confirm("WARNING: This will overwrite existing secrets. Continue?")) {
+            if (confirm(t("confirm_restore"))) {
                 try {
                     await API.restore(file);
-                    UI.showNotification("Restored successfully!", "success");
+                    UI.showNotification(t("notif_restored"), "success");
                     this.loadFiles();
                 } catch (err) {
-                    UI.showNotification("ERROR RESTORING: " + err.message, "error");
+                    UI.showNotification(t("notif_restore_fail", { error: err.message }), "error");
                 }
             }
             e.target.value = ''; // reset input
@@ -420,13 +509,13 @@ const App = {
 
     async handleNewCategory(path) {
         this.executeSafe(async () => {
-            const finalPath = path || prompt("Enter new root category name (e.g., 'Work' or 'Social')");
+            const finalPath = path || prompt(t("prompt_root_category"));
             if (finalPath) {
                 try {
                     await API.createCategory(finalPath);
                     this.loadFiles();
                 } catch (err) {
-                    UI.showNotification("ERROR CREATING CATEGORY: " + err.message, "error");
+                    UI.showNotification(t("notif_category_fail", { error: err.message }), "error");
                 }
             }
         });

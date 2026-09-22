@@ -1,0 +1,82 @@
+{
+  "realm": "talos",
+  "enabled": true,
+  "displayName": "TALOS",
+  "loginTheme": "talos",
+  "accountTheme": "keycloak.v2",
+  "emailTheme": "keycloak",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "es"],
+  "defaultLocale": "en",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      { "name": "talos-admin", "description": "Operator unseal / initialize" },
+      { "name": "talos-user", "description": "Standard vault user" }
+    ]
+  },
+  "users": [
+    {
+      "username": "dev",
+      "enabled": true,
+      "email": "dev@talos.local",
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "devpass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["talos-user", "talos-admin"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "talos-web",
+      "name": "TALOS Web",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "talos-web-dev-secret",
+      "redirectUris": [
+        "http://localhost:3000/api/auth/oidc/callback",
+        "http://127.0.0.1:3000/api/auth/oidc/callback"
+      ],
+      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "talos-extension",
+      "name": "TALOS Extension",
+      "enabled": true,
+      "publicClient": true,
+      "redirectUris": [
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "https://*/*",
+        "https://*.chromiumapp.org/*"
+      ],
+      "webOrigins": ["*"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "scopeMappings": [],
+  "clientScopeMappings": {}
+}

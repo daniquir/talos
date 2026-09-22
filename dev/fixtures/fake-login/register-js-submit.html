@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Register JS submit</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Register · JS navigate</h1>
+    <p class="lede">No native form submit — button stores values and navigates (Firefox pagehide capture).</p>
+    <div class="panel" id="register-panel">
+      <label>
+        Username
+        <input id="identifier" name="username" type="text" autocomplete="username" />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="new-password" />
+      </label>
+      <label>
+        Confirm
+        <input id="password-confirm" name="password_confirm" type="password" autocomplete="new-password" />
+      </label>
+      <button type="button" id="btn-create">Create account</button>
+    </div>
+    <p id="result" aria-live="polite"></p>
+  </main>
+  <script src="shared.js"></script>
+  <script>
+    document.getElementById("btn-create").addEventListener("click", () => {
+      const user = document.getElementById("identifier").value.trim();
+      const pass = document.getElementById("password").value;
+      const confirm = document.getElementById("password-confirm").value;
+      const result = document.getElementById("result");
+      if (!user || pass.length < 2 || pass !== confirm) {
+        result.className = "fail";
+        result.textContent = "Fill matching passwords and a new username.";
+        return;
+      }
+      result.className = "ok";
+      result.textContent = "Navigating…";
+      setTimeout(() => acmeGoSuccess(`mode=register-js&user=${encodeURIComponent(user)}`), 200);
+    });
+  </script>
+</body>
+</html>

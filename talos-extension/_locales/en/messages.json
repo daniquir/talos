@@ -1,0 +1,26 @@
+{
+  "extensionName": {
+    "message": "talos-vault",
+    "description": "Store listing name (AMO/CWS; 'talos' was taken)"
+  },
+  "extensionDescription": {
+    "message": "Autofill credentials from your self-hosted TALOS vault.",
+    "description": "Extension description"
+  },
+  "contextFill": {
+    "message": "Fill with talos-vault…",
+    "description": "Context menu: open fill UI on editable field"
+  },
+  "contextOpen": {
+    "message": "Open talos-vault",
+    "description": "Context menu: open extension popup"
+  },
+  "commandOpenPopup": {
+    "message": "Open talos-vault popup",
+    "description": "Keyboard command description"
+  },
+  "commandFillPrimary": {
+    "message": "Fill primary match for current site",
+    "description": "Keyboard command description"
+  }
+}

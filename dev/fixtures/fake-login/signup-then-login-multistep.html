@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Signup multistep</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Signup · multistep</h1>
+    <p class="lede">Email step, then password step. New email → Save.</p>
+    <form id="register-form" autocomplete="on">
+      <div class="step" id="step-id">
+        <label>
+          Email
+          <input id="identifier" name="email" type="email" autocomplete="email" required />
+        </label>
+        <button type="button" id="btn-next">Next</button>
+      </div>
+      <div class="step" id="step-pass" hidden>
+        <label>
+          Password
+          <input id="password" name="password" type="password" autocomplete="new-password" />
+        </label>
+        <label>
+          Confirm
+          <input id="password-confirm" name="password_confirm" type="password" autocomplete="new-password" />
+        </label>
+        <div class="actions">
+          <button type="button" id="btn-back" class="secondary">Back</button>
+          <button type="submit">Create account</button>
+        </div>
+      </div>
+    </form>
+    <p id="result" aria-live="polite"></p>
+  </main>
+  <script src="shared.js"></script>
+  <script>
+    const stepId = document.getElementById("step-id");
+    const stepPass = document.getElementById("step-pass");
+    const idInput = document.getElementById("identifier");
+    const passInput = document.getElementById("password");
+    const confirmInput = document.getElementById("password-confirm");
+    document.getElementById("btn-next").addEventListener("click", () => {
+      if (!idInput.value.trim()) return;
+      stepId.hidden = true;
+      stepPass.hidden = false;
+      passInput.required = true;
+      confirmInput.required = true;
+    });
+    document.getElementById("btn-back").addEventListener("click", () => {
+      stepPass.hidden = true;
+      stepId.hidden = false;
+      passInput.required = false;
+      confirmInput.required = false;
+    });
+    acmeWireRegister({ idField: "identifier" });
+  </script>
+</body>
+</html>

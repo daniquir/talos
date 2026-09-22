@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Dismiss / Never</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Dismiss / Never bank</h1>
+    <p class="lede">Normal login used to exercise Not now / Never for this host. Clear <code>captureNeverHosts</code> in extension storage to re-enable.</p>
+    <form id="login-form" autocomplete="on">
+      <label>
+        Username
+        <input id="identifier" name="username" type="text" autocomplete="username" required />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="result" aria-live="polite"></p>
+  </main>
+  <script src="shared.js"></script>
+  <script>acmeWireOneStep({ idField: "identifier" });</script>
+</body>
+</html>

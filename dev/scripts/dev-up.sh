@@ -18,7 +18,15 @@ fi
 COMPOSE=(docker compose -f docker-compose.yaml -f docker-compose.dev.yaml --env-file .env.dev)
 
 echo "==> Preparing data-dev directories"
-mkdir -p data-dev/{web,password-store,ssh,bunker-gnupg}
+mkdir -p data-dev/{web,password-store,ssh,bunker-gnupg,bunker-gnupg-users,bunker-wrapped,keycloak}
+# Bunker runs as uid 1000; Docker may create bind-mount dirs as root otherwise.
+if command -v docker >/dev/null 2>&1; then
+  docker run --rm \
+    -v "$ROOT/data-dev/bunker-gnupg-users:/u" \
+    -v "$ROOT/data-dev/bunker-wrapped:/w" \
+    alpine chown -R 1000:1000 /u /w >/dev/null 2>&1 || true
+fi
+chmod 700 data-dev/bunker-gnupg-users data-dev/bunker-wrapped 2>/dev/null || true
 
 if [[ ! -f data-dev/ssh/id_rsa_talos ]]; then
   echo "==> Generating SSH placeholder key for storage mount"
@@ -57,9 +65,10 @@ echo "==> Seeding sample data"
 
 echo ""
 echo "Talos DEV is ready."
-echo "  UI:         http://localhost:3000"
-echo "  Master key: DevMasterKey-ChangeMe!"
-echo "  GPG ID:     dev@talos.local"
+echo "  UI:          http://localhost:3000"
+echo "  Keycloak:    http://localhost:8080  (admin / admin)"
+echo "  Realm user:  dev / devpass"
+echo "  Vault pass:  ${TALOS_MASTER_KEY:-DevMasterKey-ChangeMe!}  (per-user; after Keycloak)"
 echo ""
 echo "Useful commands:"
 echo "  ./dev/scripts/dev-seed.sh     # re-seed if vault empty"

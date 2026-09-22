@@ -4,10 +4,25 @@
 # Or via helper: ./dev/scripts/dev-up.sh
 
 services:
+  keycloak:
+    volumes:
+      - ./dev/keycloak/talos-realm.json:/opt/keycloak/data/import/talos-realm.json:ro,z
+      - ./dev/keycloak/themes:/opt/keycloak/themes:ro,z
+    ports:
+      - "8080:8080"
+
   talos-web:
     environment:
       - DEBUG=true
       - DATABASE_URL=sqlite:/data/talos.db
+      - MULTIUSER=${MULTIUSER:-true}
+      - TALOS_CUSTODY_MODE=${TALOS_CUSTODY_MODE:-strict}
+      - OIDC_ISSUER=${OIDC_ISSUER:-http://localhost:8080/realms/talos}
+      - OIDC_ISSUER_INTERNAL=${OIDC_ISSUER_INTERNAL:-http://keycloak:8080/realms/talos}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-talos-web}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-talos-web-dev-secret}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:3000/api/auth/oidc/callback}
+      - SHARED_SECRET=${SHARED_SECRET:-talos_dev_secret}
     volumes:
       - ./data-dev/web:/data:z
     ports:
@@ -19,6 +34,7 @@ services:
       - DEBUG=true
       - GPG_ID=${GPG_ID:-dev@talos.local}
       - SHARED_SECRET=${SHARED_SECRET:-talos_dev_secret}
+      - MULTIUSER=${MULTIUSER:-true}
     volumes:
       - ./data-dev/password-store:/home/talosuser/.password-store:rw,z
       - ./dev/config:/app/config:ro,z
@@ -29,6 +45,12 @@ services:
       - DEBUG=true
       - GPG_ID=${GPG_ID:-dev@talos.local}
       - SHARED_SECRET=${SHARED_SECRET:-talos_dev_secret}
+      - MULTIUSER=${MULTIUSER:-true}
+      - TALOS_CUSTODY_MODE=${TALOS_CUSTODY_MODE:-strict}
+      - GNUPG_USERS_DIR=/home/talos/.gnupg-users
+      - WRAPPED_KEYS_DIR=/home/talos/.talos-wrapped
     volumes:
-      # Persist GPG keys so restarts keep the vault initialized (still SEALED until login)
+      # Legacy single-tenant keyring (MULTIUSER=false)
       - ./data-dev/bunker-gnupg:/home/talos/.gnupg:rw,z
+      - ./data-dev/bunker-gnupg-users:/home/talos/.gnupg-users:rw,z
+      - ./data-dev/bunker-wrapped:/home/talos/.talos-wrapped:rw,z

@@ -1,0 +1,162 @@
+# Production overlay for kanda-server (and any real host).
+#
+#   cp -n .env.prod.example .env.prod
+#   # edit .env.prod — never commit it
+#   docker compose -f docker-compose.prod.yaml --env-file .env.prod up --build -d
+#
+# Do NOT use docker-compose.yaml as-is in production: it starts Keycloak in
+# start-dev with admin/admin. Identity here is the existing Keycloak NDK.
+#
+# Apache on kanda_net reverse-proxies https://talos.kanda.cloud → talos-web:3000
+# (see deploy/kanda/httpd-talos.kanda.cloud.conf). Host port 3000 is AdGuard;
+# this file does not publish 3000.
+
+name: talos
+
+services:
+  talos-web:
+    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.0}-web
+    build:
+      context: ./talos-web
+      dockerfile: Dockerfile
+    container_name: talos-web
+    environment:
+      - DEBUG=false
+      - DATABASE_URL=sqlite:/data/talos.db
+      - MULTIUSER=true
+      - TALOS_CUSTODY_MODE=${TALOS_CUSTODY_MODE:-strict}
+      - OIDC_ISSUER=${OIDC_ISSUER}
+      - OIDC_ISSUER_INTERNAL=${OIDC_ISSUER_INTERNAL}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-talos-web}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI}
+      - SHARED_SECRET=${SHARED_SECRET}
+      - STORAGE_URL=http://talos-storage:4000
+    volumes:
+      - ${TALOS_DATA:-./data}/web:/data
+    extra_hosts:
+      - "dev.kanda.cloud:10.20.30.40"
+      - "talos.kanda.cloud:10.20.30.40"
+    networks:
+      - net_public
+      - net_middleware
+      - kanda_net
+    depends_on:
+      - talos-storage
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  talos-storage:
+    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.0}-storage
+    build:
+      context: ./talos-storage
+      dockerfile: Dockerfile
+    container_name: talos-storage
+    environment:
+      - GPG_ID=${GPG_ID}
+      - DEBUG=false
+      - SHARED_SECRET=${SHARED_SECRET}
+      - MULTIUSER=true
+    volumes:
+      - ${TALOS_DATA:-./data}/password-store:/home/talosuser/.password-store:rw
+      - ${TALOS_CONFIG:-./deploy/kanda/config}:/app/config:ro
+    networks:
+      - net_middleware
+      - net_private
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:mode=1777
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  talos-bunker:
+    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.0}-bunker
+    build:
+      context: ./talos-bunker
+      dockerfile: Dockerfile
+    container_name: talos-bunker
+    environment:
+      - GPG_ID=${GPG_ID}
+      - DEBUG=false
+      - SHARED_SECRET=${SHARED_SECRET}
+      - MULTIUSER=true
+      - TALOS_CUSTODY_MODE=${TALOS_CUSTODY_MODE:-strict}
+      - GNUPG_USERS_DIR=/home/talos/.gnupg-users
+      - WRAPPED_KEYS_DIR=/home/talos/.talos-wrapped
+    volumes:
+      - ${TALOS_DATA:-./data}/bunker-gnupg-users:/home/talos/.gnupg-users:rw
+      - ${TALOS_DATA:-./data}/bunker-wrapped:/home/talos/.talos-wrapped:rw
+    networks:
+      - net_private
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/process"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+networks:
+  net_public:
+    driver: bridge
+  net_middleware:
+    internal: true
+  net_private:
+    internal: true
+  kanda_net:
+    external: true

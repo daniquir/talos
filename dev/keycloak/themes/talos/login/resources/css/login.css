@@ -1,0 +1,360 @@
+/* TALOS Keycloak login — retro hacker / CRT vault aesthetic */
+
+:root {
+  --talos-bg: #000000;
+  --talos-panel: #09090b;
+  --talos-panel-2: #18181b;
+  --talos-border: #27272a;
+  --talos-green: #22c55e;
+  --talos-green-dim: #16a34a;
+  --talos-green-soft: rgba(34, 197, 94, 0.12);
+  --talos-green-glow: rgba(34, 197, 94, 0.35);
+  --talos-text: #e4e4e7;
+  --talos-muted: #71717a;
+  --talos-danger: #ef4444;
+  --talos-warn: #eab308;
+  --talos-font: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body.talos-body {
+  font-family: var(--talos-font);
+  background-color: var(--talos-bg);
+  color: var(--talos-green);
+  text-shadow: 0 0 0.125rem rgba(34, 197, 94, 0.3);
+  background-image:
+    linear-gradient(rgba(18, 18, 18, 0.95), rgba(18, 18, 18, 0.95)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%231a2e1a' fill-opacity='0.08' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+  position: relative;
+  overflow-x: hidden;
+}
+
+.crt-overlay {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background:
+    linear-gradient(to bottom, rgba(18, 18, 18, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.05), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.05));
+  background-size: 100% 0.125rem, 0.1875rem 100%;
+  opacity: 0.9;
+}
+
+.talos-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.talos-topbar {
+  height: 3.25rem;
+  border-bottom: 1px solid var(--talos-border);
+  background: rgba(9, 9, 11, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--talos-green);
+  font-weight: 700;
+}
+
+.pulse {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--talos-green);
+  box-shadow: 0 0 12px var(--talos-green-glow);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+
+.top-meta {
+  color: var(--talos-muted);
+}
+
+.talos-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem 3rem;
+}
+
+.talos-card {
+  width: 100%;
+  max-width: 26rem;
+  background: var(--talos-panel);
+  border: 1px solid var(--talos-border);
+  box-shadow:
+    0 0 40px rgba(0, 0, 0, 0.85),
+    0 0 28px rgba(34, 197, 94, 0.08);
+}
+
+.card-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 1.75rem 1rem;
+  text-align: center;
+  border-bottom: 1px solid var(--talos-border);
+}
+
+.logo {
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.45));
+}
+
+.card-head h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.lede {
+  margin: 0;
+  color: var(--talos-muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.card-body {
+  padding: 1.5rem 1.75rem 1.25rem;
+}
+
+.card-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--talos-border);
+  color: var(--talos-muted);
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.talos-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--talos-muted);
+}
+
+.input {
+  width: 100%;
+  background: var(--talos-panel-2);
+  border: 1px solid var(--talos-border);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  padding: 0.9rem 0.95rem;
+  text-align: center;
+  text-shadow: none;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+  color: #52525b;
+  letter-spacing: 0.12em;
+}
+
+.input:focus {
+  border-color: var(--talos-green);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.25), 0 0 18px rgba(34, 197, 94, 0.12);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--talos-danger);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+.row-opts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--talos-muted);
+  cursor: pointer;
+}
+
+.check input {
+  accent-color: var(--talos-green);
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.btn-primary {
+  width: 100%;
+  border: 1px solid var(--talos-green-dim);
+  background: rgba(20, 83, 45, 0.35);
+  color: var(--talos-green);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 0.95rem 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-primary:hover,
+.btn-primary:focus-visible {
+  background: var(--talos-green);
+  color: #000;
+  text-shadow: none;
+  box-shadow: 0 0 18px var(--talos-green-glow);
+  outline: none;
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  pointer-events: none;
+}
+
+.linkish {
+  color: var(--talos-green);
+  text-decoration: none;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0;
+}
+
+.linkish:hover {
+  text-decoration: underline;
+  text-shadow: 0 0 8px var(--talos-green-glow);
+}
+
+.alert {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px solid var(--talos-border);
+  background: #020202;
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 1rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.alert-tag {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.alert-error,
+.alert-error .alert-tag {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: var(--talos-danger);
+  text-shadow: 0 0 6px rgba(239, 68, 68, 0.35);
+}
+
+.alert-success,
+.alert-success .alert-tag {
+  border-color: rgba(34, 197, 94, 0.45);
+  color: var(--talos-green);
+}
+
+.alert-warning,
+.alert-warning .alert-tag {
+  border-color: rgba(234, 179, 8, 0.45);
+  color: var(--talos-warn);
+}
+
+.alert-info,
+.alert-info .alert-tag {
+  color: #a1a1aa;
+}
+
+.register-hint,
+.info-block {
+  margin-top: 1.1rem;
+  text-align: center;
+  color: var(--talos-muted);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.alt-form {
+  margin-top: 0.85rem;
+  text-align: center;
+}
+
+/* Secondary Keycloak forms (reset, totp, error) inherit same look */
+#kc-passwd-update-form .input,
+#kc-totp-login-form .input,
+#kc-register-form .input {
+  text-align: left;
+}
+
+@media (max-width: 480px) {
+  .talos-card {
+    border-left: 0;
+    border-right: 0;
+  }
+
+  .card-head,
+  .card-body {
+    padding-left: 1.1rem;
+    padding-right: 1.1rem;
+  }
+}

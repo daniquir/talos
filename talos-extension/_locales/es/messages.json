@@ -1,0 +1,26 @@
+{
+  "extensionName": {
+    "message": "talos-vault",
+    "description": "Nombre en las stores (AMO/CWS; 'talos' estaba ocupado)"
+  },
+  "extensionDescription": {
+    "message": "Autocompleta credenciales desde tu vault TALOS autoalojado.",
+    "description": "Descripción de la extensión"
+  },
+  "contextFill": {
+    "message": "Rellenar con talos-vault…",
+    "description": "Menú contextual: abrir relleno en campo editable"
+  },
+  "contextOpen": {
+    "message": "Abrir talos-vault",
+    "description": "Menú contextual: abrir popup"
+  },
+  "commandOpenPopup": {
+    "message": "Abrir popup de talos-vault",
+    "description": "Descripción del atajo"
+  },
+  "commandFillPrimary": {
+    "message": "Rellenar el primer match del sitio",
+    "description": "Descripción del atajo"
+  }
+}

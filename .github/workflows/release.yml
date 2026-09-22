@@ -1,4 +1,24 @@
-name: TALOS Release & Deploy
+name: TALOS Release
+
+# Push a version tag (e.g. v1.2.0) to:
+#   1) create the GitHub Release
+#   2) build/push Docker images to Docker Hub namespace kandacloud
+#   3) package talos-extension and attach it to the Release
+#   4) optionally submit the extension to Chrome Web Store / Firefox AMO
+#
+# Required repository secrets:
+#   DOCKER_USERNAME, DOCKER_PASSWORD
+#
+# Optional repository secrets (store publish — skipped if unset):
+#   CHROME_EXTENSION_ID, CHROME_CLIENT_ID, CHROME_CLIENT_SECRET, CHROME_REFRESH_TOKEN
+#   AMO_JWT_ISSUER, AMO_JWT_SECRET
+#
+# Optional repository variables:
+#   DOCKER_IMAGE       (default: kandacloud/talos) — single Hub repo; tags are
+#                      {version}-web|storage|bunker and web|storage|bunker
+#   AMO_CHANNEL        (default: listed)
+#   PUBLISH_CHROME     (set to "true" to enable CWS upload)
+#   PUBLISH_FIREFOX    (set to "true" to enable AMO sign/submit)
 
 on:
   push:
@@ -12,6 +32,9 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      docker_image: ${{ steps.img.outputs.image }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,22 +45,49 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve Docker image name
+        id: img
+        run: |
+          IMG="${{ vars.DOCKER_IMAGE }}"
+          if [[ -z "$IMG" ]]; then IMG=kandacloud/talos; fi
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
+
       - name: Build release notes from CHANGELOG
         id: notes
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          IMG="${{ steps.img.outputs.image }}"
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           {
             echo "## TALOS v${VERSION}"
             echo
             if [[ -f CHANGELOG.md ]]; then
-              # Extract the section for this version until the next ## heading
               awk -v ver="$VERSION" '
                 $0 ~ "^## \\[" ver "\\]" {grab=1; next}
                 grab && $0 ~ /^## \[/ {exit}
                 grab {print}
               ' CHANGELOG.md
             fi
+            echo
+            echo "### Docker image (\`${IMG}\`)"
+            echo
+            echo "One Hub repository; three layer tags:"
+            echo
+            echo "- \`${IMG}:${VERSION}-web\` (also \`:web\`)"
+            echo "- \`${IMG}:${VERSION}-storage\` (also \`:storage\`)"
+            echo "- \`${IMG}:${VERSION}-bunker\` (also \`:bunker\`)"
+            echo
+            echo "### Browser extension"
+            echo
+            echo "Asset: \`talos-extension-v${VERSION}.zip\` (store name **talos-vault**)."
+            echo
+            echo "### Deploy from images"
+            echo
+            echo '```bash'
+            echo "export TALOS_IMAGE=${IMG} TALOS_VERSION=${VERSION}"
+            echo "docker compose -f docker-compose.prod.yaml --env-file .env.prod pull"
+            echo "docker compose -f docker-compose.prod.yaml --env-file .env.prod up -d --no-build"
+            echo '```'
           } > "$NOTES_FILE"
           echo "file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
@@ -48,17 +98,23 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           body_path: ${{ steps.notes.outputs.file }}
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 
   build-and-push:
-    name: Build & Push Docker images
+    name: Docker Hub (${{ matrix.layer }})
     needs: github-release
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: [talos-web, talos-storage, talos-bunker]
-
+        include:
+          - layer: web
+            context: talos-web
+          - layer: storage
+            context: talos-storage
+          - layer: bunker
+            context: talos-bunker
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,22 +128,133 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
-          images: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./${{ matrix.service }}
-          file: ./${{ matrix.service }}/Dockerfile
+          context: ./${{ matrix.context }}
+          file: ./${{ matrix.context }}/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ needs.github-release.outputs.docker_image }}:${{ needs.github-release.outputs.version }}-${{ matrix.layer }}
+            ${{ needs.github-release.outputs.docker_image }}:${{ matrix.layer }}
+          labels: |
+            org.opencontainers.image.title=TALOS ${{ matrix.layer }}
+            org.opencontainers.image.version=${{ needs.github-release.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+  extension:
+    name: Package browser extension
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync extension version to tag
+        run: |
+          VERSION="${{ needs.github-release.outputs.version }}"
+          python3 - <<PY
+          import json
+          from pathlib import Path
+          p = Path("talos-extension/manifest.json")
+          m = json.loads(p.read_text())
+          m["version"] = "${VERSION}"
+          p.write_text(json.dumps(m, indent=2) + "\n")
+          print("extension version ->", m["version"])
+          print("gecko id ->", m.get("browser_specific_settings", {}).get("gecko", {}).get("id"))
+          PY
+
+      - name: Package zip
+        run: |
+          chmod +x talos-extension/scripts/package.sh
+          ./talos-extension/scripts/package.sh
+          test -f "dist/talos-extension-v${{ needs.github-release.outputs.version }}.zip"
+
+      - name: Upload extension to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/talos-extension-v${{ needs.github-release.outputs.version }}.zip
+
+      - name: Upload artifact for store jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: talos-extension-zip
+          path: dist/talos-extension-v${{ needs.github-release.outputs.version }}.zip
+          if-no-files-found: error
+
+  publish-chrome:
+    name: Publish Chrome Web Store
+    needs: [github-release, extension]
+    runs-on: ubuntu-latest
+    # Gate with a repo variable so missing secrets do not fail the whole release.
+    if: ${{ vars.PUBLISH_CHROME == 'true' }}
+    steps:
+      - name: Download extension zip
+        uses: actions/download-artifact@v4
+        with:
+          name: talos-extension-zip
+          path: dist
+
+      - name: Upload & publish to Chrome Web Store
+        env:
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          ZIP: dist/talos-extension-v${{ needs.github-release.outputs.version }}.zip
+        run: |
+          set -euo pipefail
+          for v in EXTENSION_ID CLIENT_ID CLIENT_SECRET REFRESH_TOKEN; do
+            if [[ -z "${!v}" ]]; then
+              echo "Missing secret $v — set PUBLISH_CHROME=false or configure Chrome store secrets."
+              exit 1
+            fi
+          done
+          npm install -g chrome-webstore-upload-cli@3
+          chrome-webstore-upload upload \
+            --source "$ZIP" \
+            --extension-id "$EXTENSION_ID" \
+            --client-id "$CLIENT_ID" \
+            --client-secret "$CLIENT_SECRET" \
+            --refresh-token "$REFRESH_TOKEN" \
+            --auto-publish
+
+  publish-firefox:
+    name: Publish Firefox AMO
+    needs: [github-release, extension]
+    runs-on: ubuntu-latest
+    if: ${{ vars.PUBLISH_FIREFOX == 'true' }}
+    steps:
+      - name: Download extension zip
+        uses: actions/download-artifact@v4
+        with:
+          name: talos-extension-zip
+          path: dist
+
+      - name: Sign / submit to AMO
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          ZIP: dist/talos-extension-v${{ needs.github-release.outputs.version }}.zip
+          CHANNEL: ${{ vars.AMO_CHANNEL || 'listed' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$AMO_JWT_ISSUER" || -z "$AMO_JWT_SECRET" ]]; then
+            echo "Missing AMO_JWT_ISSUER / AMO_JWT_SECRET."
+            exit 1
+          fi
+          npm install -g web-ext@8
+          mkdir -p /tmp/amo-src
+          unzip -q "$ZIP" -d /tmp/amo-src
+          # Submits a new version for review (does not bypass AMO review).
+          web-ext sign \
+            --source-dir /tmp/amo-src \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" \
+            --channel "$CHANNEL" \
+            --timeout 900000

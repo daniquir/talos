@@ -1,4 +1,5 @@
 import { API } from './api.js';
+import { t } from './i18n.js';
 
 export const UI = {
     elements: {},
@@ -104,15 +105,21 @@ export const UI = {
 
     setAuthMethod(method) {
         this.elements.authIndicator.classList.remove('hidden');
+        this.elements.authText.dataset.method = method || '';
         if (method === 'mtls') {
             this.elements.authIcon.setAttribute('data-lucide', 'award');
             this.elements.authIcon.classList.replace('text-zinc-500', 'text-yellow-500');
-            this.elements.authText.innerText = 'DIPLOMATIC';
+            this.elements.authText.innerText = t('auth_diplomatic');
             this.elements.authText.classList.replace('text-zinc-500', 'text-yellow-500');
+        } else if (method === 'oidc' || method === 'oidc+vault') {
+            this.elements.authIcon.setAttribute('data-lucide', 'shield');
+            this.elements.authIcon.classList.replace('text-yellow-500', 'text-green-500');
+            this.elements.authText.innerText = t('auth_oidc');
+            this.elements.authText.classList.replace('text-yellow-500', 'text-green-500');
         } else {
             this.elements.authIcon.setAttribute('data-lucide', 'key');
             this.elements.authIcon.classList.replace('text-green-500', 'text-zinc-500');
-            this.elements.authText.innerText = 'MASTER KEY';
+            this.elements.authText.innerText = t('auth_master_key');
             this.elements.authText.classList.replace('text-green-500', 'text-zinc-500');
         }
         // @ts-ignore
@@ -166,7 +173,7 @@ export const UI = {
     },
     
     setDecryptingStatus(path) {
-        this.elements.header.innerText = `DECRYPTING: ${path}...`;
+        this.elements.header.innerText = t('status_decrypting', { path });
     },
     
     parseContentToForm(text) {
@@ -174,9 +181,11 @@ export const UI = {
         // If secret is hidden, show empty or placeholder, but DO NOT fill the value with the marker
         if (lines[0] === '__TALOS_HIDDEN_SECRET__') {
             this.elements.entrySecret.value = '';
-            this.elements.entrySecret.placeholder = '(Unchanged) Leave empty to keep current password';
+            this.elements.entrySecret.placeholder = t('ph_secret_unchanged');
+            this.elements.entrySecret.dataset.keepSecret = '1';
         } else {
             this.elements.entrySecret.value = lines[0] || '';
+            this.elements.entrySecret.dataset.keepSecret = '';
         }
         
         // Reset other fields
@@ -214,7 +223,7 @@ export const UI = {
         // Let's implement a special marker.
         
         let content = pass;
-        if (pass === '' && this.elements.entrySecret.placeholder.includes('(Unchanged)')) {
+        if (pass === '' && this.elements.entrySecret.dataset.keepSecret === '1') {
              content = '__TALOS_KEEP_SECRET__';
         }
 
@@ -249,6 +258,8 @@ export const UI = {
     clearForm() {
         this.elements.form.reset();
         this.elements.entryOriginalPath.value = '';
+        this.elements.entrySecret.dataset.keepSecret = '';
+        this.elements.entrySecret.placeholder = t('ph_secret');
     },
 
     renderSecretView(path, text) {
@@ -279,7 +290,7 @@ export const UI = {
 
         const descEl = document.createElement('p');
         descEl.className = 'text-sm text-zinc-400 mb-8 italic';
-        descEl.innerText = descText || 'No description.';
+        descEl.innerText = descText || t('no_description');
 
         viewer.appendChild(titleEl);
         viewer.appendChild(descEl);
@@ -321,7 +332,7 @@ export const UI = {
         passwordRow.className = 'group flex items-center gap-4';
         const passLabel = document.createElement('span');
         passLabel.className = 'w-20 text-zinc-500 text-xs uppercase tracking-widest';
-        passLabel.innerText = 'Password';
+        passLabel.innerText = t('password');
         const passValue = document.createElement('span');
         passValue.className = 'flex-1 text-zinc-300 font-bold';
         passValue.innerText = '••••••••••••'; // Fixed length mask
@@ -356,8 +367,8 @@ export const UI = {
         passwordRow.appendChild(passValue);
         passwordRow.appendChild(passButtons);
 
-        if (url) fieldsContainer.appendChild(createMetadataRow('URL', url));
-        if (user) fieldsContainer.appendChild(createMetadataRow('User', user));
+        if (url) fieldsContainer.appendChild(createMetadataRow(t('url'), url));
+        if (user) fieldsContainer.appendChild(createMetadataRow(t('user'), user));
         fieldsContainer.appendChild(passwordRow);
 
         viewer.appendChild(fieldsContainer);

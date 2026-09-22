@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <title>TALOS // VAULT-OS</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill-rule='evenodd' clip-rule='evenodd' d='M0 0H16V2H0V0ZM6 2H10V14H6V2Z' fill='%2322c55e'/></svg>">
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon32.png">
+    <link rel="icon" type="image/png" sizes="48x48" href="/icons/icon48.png">
+    <link rel="apple-touch-icon" sizes="128x128" href="/icons/icon128.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/themes/default-dark/style.min.css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -188,12 +191,13 @@
     <!-- HEADER & STATUS -->
     <header class="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/50">
         <div class="flex items-center gap-4">
+            <img src="/icons/icon32.png" alt="" width="20" height="20" class="image-pixelated drop-shadow-[0_0_4px_rgba(34,197,94,0.5)]" style="image-rendering: pixelated;">
             <div id="status-main" class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <h1 class="text-xs font-bold tracking-[0.3em] text-zinc-100 uppercase">Talos Systems</h1>
+            <h1 class="text-xs font-bold tracking-[0.3em] text-zinc-100 uppercase" data-i18n="brand_title">Talos Systems</h1>
             <!-- Auth Method Indicator -->
             <div id="auth-indicator" class="hidden flex items-center gap-2 px-2 py-1 bg-zinc-900 rounded border border-zinc-800">
                 <i id="auth-icon" data-lucide="shield" class="w-3 h-3 text-zinc-500"></i>
-                <span id="auth-text" class="text-[0.5625rem] text-zinc-500 uppercase tracking-wider">SECURE</span>
+                <span id="auth-text" class="text-[0.5625rem] text-zinc-500 uppercase tracking-wider" data-i18n="auth_secure">SECURE</span>
             </div>
             <!-- Session Timer -->
             <div id="session-timer" class="hidden text-[0.5625rem] font-mono text-zinc-600 flex items-center gap-2 border-l border-zinc-800 pl-4 ml-2">
@@ -202,17 +206,25 @@
         </div>
         
         <div class="flex items-center gap-8">
+            <label class="flex items-center gap-2 text-[0.625rem] text-zinc-500 uppercase tracking-wider">
+                <span data-i18n="btn_language">Language</span>
+                <select id="lang-select" class="bg-zinc-900 border border-zinc-800 text-zinc-300 text-[0.625rem] uppercase px-2 py-1 focus:outline-none focus:border-green-500">
+                    <option value="auto">Auto</option>
+                    <option value="en">EN</option>
+                    <option value="es">ES</option>
+                </select>
+            </label>
             <button id="btn-backup" class="text-[0.625rem] text-zinc-400 hover:text-green-500 uppercase transition-all flex items-center gap-2">
-                <i data-lucide="download" class="w-3 h-3"></i> Backup
+                <i data-lucide="download" class="w-3 h-3"></i> <span data-i18n="btn_backup">Backup</span>
             </button>
             <button id="btn-restore" class="text-[0.625rem] text-zinc-400 hover:text-blue-500 uppercase transition-all flex items-center gap-2">
-                <i data-lucide="upload" class="w-3 h-3"></i> Restore
+                <i data-lucide="upload" class="w-3 h-3"></i> <span data-i18n="btn_restore">Restore</span>
             </button>
             <button id="btn-audit" class="text-[0.625rem] text-zinc-400 hover:text-purple-500 uppercase transition-all flex items-center gap-2">
-                <i data-lucide="activity" class="w-3 h-3"></i> Logs
+                <i data-lucide="activity" class="w-3 h-3"></i> <span data-i18n="btn_logs">Logs</span>
             </button>
             <button id="btn-logout" class="text-[0.625rem] text-zinc-500 hover:text-red-500 uppercase transition-all flex items-center gap-2 ml-4 border-l border-zinc-800 pl-4">
-                <i data-lucide="log-out" class="w-3 h-3"></i> Exit
+                <i data-lucide="log-out" class="w-3 h-3"></i> <span data-i18n="btn_exit">Exit</span>
             </button>
             <input type="file" id="file-restore" class="hidden" accept=".zip">
         </div>
@@ -223,19 +235,19 @@
         <aside class="w-72 border-r border-zinc-900 bg-zinc-950/20 flex flex-col min-h-0 overflow-hidden flex-shrink-0">
             <div class="p-2 border-b border-zinc-900 relative flex items-center flex-shrink-0">
                 <i data-lucide="search" class="absolute left-4 w-4 h-4 text-zinc-600"></i>
-                <input type="text" id="tree-search" placeholder="Search vault..." class="w-full bg-zinc-900 border border-zinc-800 p-2 pl-10 text-xs text-white focus:outline-none focus:border-green-500 rounded-sm">
+                <input type="text" id="tree-search" data-i18n-placeholder="search_vault" placeholder="Search vault..." class="w-full bg-zinc-900 border border-zinc-800 p-2 pl-10 text-xs text-white focus:outline-none focus:border-green-500 rounded-sm">
                 <button id="clear-search" class="absolute right-4 text-zinc-600 hover:text-white hidden"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
             <div class="p-2 border-t border-zinc-900 flex gap-2 flex-shrink-0">
-                <button id="btn-new-category" class="flex-1 text-[0.625rem] text-zinc-400 hover:text-yellow-500 uppercase transition-all border border-zinc-800 p-2 rounded-sm hover:bg-yellow-500/10">New Category</button>
-                <button id="btn-new-secret" class="flex-1 text-[0.625rem] text-zinc-400 hover:text-green-500 uppercase transition-all border border-zinc-800 p-2 rounded-sm hover:bg-green-500/10">New Secret</button>
+                <button id="btn-new-category" class="flex-1 text-[0.625rem] text-zinc-400 hover:text-yellow-500 uppercase transition-all border border-zinc-800 p-2 rounded-sm hover:bg-yellow-500/10" data-i18n="btn_new_category">New Category</button>
+                <button id="btn-new-secret" class="flex-1 text-[0.625rem] text-zinc-400 hover:text-green-500 uppercase transition-all border border-zinc-800 p-2 rounded-sm hover:bg-green-500/10" data-i18n="btn_new_secret">New Secret</button>
             </div>
             <div id="tree-container" class="flex-1 overflow-y-auto p-2 custom-scroll min-h-0"></div>
         </aside>
 
         <section class="flex-1 flex flex-col bg-[#020202] min-h-0 overflow-hidden">
             <div class="h-8 border-b border-zinc-900 px-6 flex items-center justify-between">
-                <div id="viewer-header" class="text-[0.5625rem] text-zinc-600 uppercase italic">IDLE_SYSTEM</div>
+                <div id="viewer-header" class="text-[0.5625rem] text-zinc-600 uppercase italic" data-i18n="idle_system">IDLE_SYSTEM</div>
             </div>
             <div class="flex-1 p-10 overflow-auto custom-scroll">
                 <div id="viewer-content" class="text-zinc-400 text-sm leading-relaxed whitespace-pre-wrap"></div>
@@ -246,20 +258,20 @@
     <!-- ENCRYPTION MODAL -->
     <div id="modal" class="hidden fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50">
         <div class="bg-zinc-950 border border-zinc-800 w-full max-w-md p-6">
-            <h2 class="text-[0.625rem] font-bold uppercase mb-6 text-zinc-500 tracking-widest">Encrypt Data Stream</h2>
+            <h2 class="text-[0.625rem] font-bold uppercase mb-6 text-zinc-500 tracking-widest" data-i18n="encrypt_title">Encrypt Data Stream</h2>
             <form id="encrypt-form" class="space-y-3">
                 <input type="hidden" id="entry-original-path">
-                <input type="text" id="entry-path" placeholder="CATEGORY/NAME" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
-                <input type="text" id="entry-user" placeholder="USER / EMAIL / ID" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
+                <input type="text" id="entry-path" data-i18n-placeholder="ph_category_name" placeholder="CATEGORY/NAME" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
+                <input type="text" id="entry-user" data-i18n-placeholder="ph_user" placeholder="USER / EMAIL / ID" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
                 <div class="flex gap-2">
-                    <input type="text" id="entry-secret" placeholder="SECRET" class="flex-1 bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
+                    <input type="text" id="entry-secret" data-i18n-placeholder="ph_secret" placeholder="SECRET" class="flex-1 bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
                     <button type="button" id="btn-entry-gen" class="bg-zinc-900 border border-zinc-800 px-4 text-green-500 hover:bg-green-900/20 transition-all"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
                 </div>
                 
                 <!-- Generator Config (Entry) -->
                 <div class="p-3 border border-zinc-900 bg-zinc-900/30 space-y-3">
                     <div class="flex items-center justify-between">
-                        <span class="text-[0.625rem] uppercase text-zinc-500">Length: <span id="entry-gen-len-val" class="text-green-500">32</span></span>
+                        <span class="text-[0.625rem] uppercase text-zinc-500"><span data-i18n="length">Length:</span> <span id="entry-gen-len-val" class="text-green-500">32</span></span>
                         <input type="range" id="entry-gen-length" min="12" max="64" value="32" class="w-32 accent-green-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer">
                     </div>
                     <div class="flex gap-4">
@@ -278,11 +290,11 @@
                     </div>
                 </div>
 
-                <input type="text" id="entry-url" placeholder="URL / SITE" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
-                <textarea id="entry-desc" rows="3" placeholder="DESCRIPTION" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500"></textarea>
+                <input type="text" id="entry-url" data-i18n-placeholder="ph_url" placeholder="URL / SITE" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
+                <textarea id="entry-desc" rows="3" data-i18n-placeholder="ph_description" placeholder="DESCRIPTION" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500"></textarea>
                 <div class="flex gap-2">
-                    <button type="submit" class="flex-1 bg-green-900/20 border border-green-600 text-green-500 py-3 text-[0.625rem] font-bold uppercase hover:bg-green-600 hover:text-black transition-all">Execute</button>
-                    <button type="button" id="btn-cancel-secret" class="px-6 border border-zinc-800 text-zinc-500 text-[0.625rem] uppercase">Abort</button>
+                    <button type="submit" class="flex-1 bg-green-900/20 border border-green-600 text-green-500 py-3 text-[0.625rem] font-bold uppercase hover:bg-green-600 hover:text-black transition-all" data-i18n="btn_execute">Execute</button>
+                    <button type="button" id="btn-cancel-secret" class="px-6 border border-zinc-800 text-zinc-500 text-[0.625rem] uppercase" data-i18n="btn_abort">Abort</button>
                 </div>
             </form>
         </div>
@@ -293,7 +305,7 @@
         <div class="bg-zinc-950 border border-zinc-800 w-full max-w-4xl h-[80vh] flex flex-col p-6 shadow-[0_0_50px_rgba(168,85,247,0.1)]">
             <div class="flex justify-between items-center mb-6 border-b border-zinc-900 pb-4">
                 <h2 class="text-[0.625rem] font-bold uppercase text-purple-500 tracking-widest flex items-center gap-2">
-                    <i data-lucide="activity" class="w-4 h-4"></i> System Audit Trail
+                    <i data-lucide="activity" class="w-4 h-4"></i> <span data-i18n="audit_title">System Audit Trail</span>
                 </h2>
                 <button id="btn-close-audit" class="text-zinc-500 hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
@@ -302,12 +314,12 @@
                 <table class="w-full text-left border-collapse">
                     <thead class="text-zinc-500 border-b border-zinc-800">
                         <tr>
-                            <th class="py-2 w-1/6">TIME</th>
-                            <th class="py-2">ACTION</th>
-                            <th class="py-2">TARGET</th>
-                            <th class="py-2">IP</th>
-                            <th class="py-2 w-1/4">USER AGENT</th>
-                            <th class="py-2">AUTH METHOD</th>
+                            <th class="py-2 w-1/6" data-i18n="th_time">TIME</th>
+                            <th class="py-2" data-i18n="th_action">ACTION</th>
+                            <th class="py-2" data-i18n="th_target">TARGET</th>
+                            <th class="py-2" data-i18n="th_ip">IP</th>
+                            <th class="py-2 w-1/4" data-i18n="th_ua">USER AGENT</th>
+                            <th class="py-2" data-i18n="th_auth">AUTH METHOD</th>
                         </tr>
                     </thead>
                     <tbody id="audit-table-body" class="text-zinc-300"></tbody>
@@ -319,20 +331,23 @@
     <!-- SETUP MODAL (GENESIS) -->
     <div id="setup-modal" class="hidden fixed inset-0 bg-black z-[60] flex items-center justify-center">
         <div class="bg-zinc-950 border border-green-500/30 w-full max-w-lg p-8 shadow-[0_0_50px_rgba(34,197,94,0.1)]">
-            <h1 class="text-2xl font-bold text-green-500 mb-2 tracking-widest uppercase">Genesis Protocol</h1>
-            <p class="text-zinc-500 text-xs mb-6 uppercase tracking-wider">System Uninitialized. Configure Master Key.</p>
+            <div class="flex items-center gap-3 mb-2">
+                <img src="/icons/icon32.png" alt="" width="28" height="28" style="image-rendering: pixelated;" class="drop-shadow-[0_0_6px_rgba(34,197,94,0.45)]">
+                <h1 class="text-2xl font-bold text-green-500 tracking-widest uppercase" data-i18n="genesis_title">Genesis Protocol</h1>
+            </div>
+            <p class="text-zinc-500 text-xs mb-6 uppercase tracking-wider" data-i18n="genesis_lede">System Uninitialized. Configure Master Key.</p>
             
             <!-- Tabs -->
             <div class="flex border-b border-zinc-800 mb-6">
-                <button id="tab-generate" class="flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-green-500 text-white">Generate New</button>
-                <button id="tab-import" class="flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-transparent text-zinc-500 hover:text-white">Import Existing</button>
+                <button id="tab-generate" class="flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-green-500 text-white" data-i18n="tab_generate">Generate New</button>
+                <button id="tab-import" class="flex-1 py-2 text-xs uppercase tracking-wider border-b-2 border-transparent text-zinc-500 hover:text-white" data-i18n="tab_import">Import Existing</button>
             </div>
             
             <form id="setup-form" class="space-y-6">
                 <div class="space-y-2">
-                    <label class="text-[0.625rem] uppercase text-zinc-500 tracking-widest">Master Key</label>
+                    <label class="text-[0.625rem] uppercase text-zinc-500 tracking-widest" data-i18n="label_master_key">Master Key</label>
                     <div class="flex gap-2">
-                        <input type="text" id="setup-key" class="flex-1 bg-zinc-900 border border-zinc-800 p-3 text-sm text-white font-mono focus:outline-none focus:border-green-500 transition-colors" placeholder="ENTER_SECURE_KEY" required autocomplete="off">
+                        <input type="text" id="setup-key" class="flex-1 bg-zinc-900 border border-zinc-800 p-3 text-sm text-white font-mono focus:outline-none focus:border-green-500 transition-colors" data-i18n-placeholder="ph_secure_key" placeholder="ENTER_SECURE_KEY" required autocomplete="off">
                         <button type="button" id="btn-setup-gen" class="bg-zinc-900 border border-zinc-800 px-4 text-green-500 hover:bg-green-900/20 transition-all"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
                     </div>
                 </div>
@@ -340,7 +355,7 @@
                 <!-- Generator Config -->
                 <div class="p-4 border border-zinc-900 bg-zinc-900/30 space-y-4">
                     <div class="flex items-center justify-between">
-                        <span class="text-[0.625rem] uppercase text-zinc-500">Length: <span id="setup-gen-len-val" class="text-green-500">32</span></span>
+                        <span class="text-[0.625rem] uppercase text-zinc-500"><span data-i18n="length">Length:</span> <span id="setup-gen-len-val" class="text-green-500">32</span></span>
                         <input type="range" id="setup-gen-length" min="12" max="64" value="32" class="w-32 accent-green-500 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer">
                     </div>
                     <div class="flex gap-4">
@@ -359,7 +374,7 @@
                     </div>
                 </div>
 
-                <button type="submit" class="w-full bg-green-600 text-black font-bold py-4 uppercase tracking-widest hover:bg-green-500 transition-all shadow-[0_0_20px_rgba(34,197,94,0.3)]">
+                <button type="submit" class="w-full bg-green-600 text-black font-bold py-4 uppercase tracking-widest hover:bg-green-500 transition-all shadow-[0_0_20px_rgba(34,197,94,0.3)]" data-i18n="btn_initialize">
                     Initialize System
                 </button>
             </form>
@@ -367,14 +382,14 @@
             <!-- Import Form -->
             <form id="import-form" class="hidden space-y-4">
                 <div class="space-y-2">
-                    <label class="text-[0.625rem] uppercase text-zinc-500 tracking-widest">ARMORED GPG PRIVATE KEY</label>
+                    <label class="text-[0.625rem] uppercase text-zinc-500 tracking-widest" data-i18n="label_gpg_key">ARMORED GPG PRIVATE KEY</label>
                     <textarea id="import-key" rows="8" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white font-mono focus:outline-none focus:border-green-500 transition-colors" placeholder="-----BEGIN PGP PRIVATE KEY BLOCK----- ..." required></textarea>
                 </div>
                 <div class="space-y-2">
-                    <label class="text-[0.625rem] uppercase text-zinc-500 tracking-widest">Key Passphrase (if any)</label>
-                    <input type="password" id="import-passphrase" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-sm text-white font-mono focus:outline-none focus:border-green-500 transition-colors" placeholder="Leave empty if none">
+                    <label class="text-[0.625rem] uppercase text-zinc-500 tracking-widest" data-i18n="label_passphrase">Key Passphrase (if any)</label>
+                    <input type="password" id="import-passphrase" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-sm text-white font-mono focus:outline-none focus:border-green-500 transition-colors" data-i18n-placeholder="ph_passphrase" placeholder="Leave empty if none">
                 </div>
-                <button type="submit" class="w-full bg-blue-600 text-white font-bold py-4 uppercase tracking-widest hover:bg-blue-500 transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                <button type="submit" class="w-full bg-blue-600 text-white font-bold py-4 uppercase tracking-widest hover:bg-blue-500 transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]" data-i18n="btn_import_init">
                     Import Key &amp; Initialize
                 </button>
             </form>
@@ -384,12 +399,19 @@
     <!-- LOGIN MODAL -->
     <div id="login-modal" class="hidden fixed inset-0 bg-black z-[60] flex items-center justify-center">
         <div class="bg-zinc-950 border border-zinc-800 w-full max-w-md p-8 shadow-[0_0_30px_rgba(0,0,0,0.8)]">
-            <h1 class="text-xl font-bold text-white mb-6 tracking-widest uppercase text-center">System Locked</h1>
+            <div class="flex flex-col items-center gap-3 mb-6">
+                <img src="/icons/icon48.png" alt="TALOS" width="40" height="40" style="image-rendering: pixelated;" class="drop-shadow-[0_0_8px_rgba(34,197,94,0.45)]">
+                <h1 class="text-xl font-bold text-white tracking-widest uppercase text-center" data-i18n="login_title">System Locked</h1>
+            </div>
             
             <form id="login-form" class="space-y-4">
-                <input type="password" id="login-key" class="w-full bg-zinc-900 border border-zinc-800 p-4 text-center text-white font-mono focus:outline-none focus:border-green-500 transition-colors" placeholder="ENTER MASTER KEY" required autofocus>
+                <a id="btn-oidc-login" href="/api/auth/oidc/login" class="hidden block w-full bg-green-700 text-white font-bold py-3 uppercase tracking-widest text-center hover:bg-green-600 transition-all" data-i18n="btn_oidc_login">
+                    Sign in with Keycloak
+                </a>
+                <p id="login-oidc-hint" class="hidden text-center text-zinc-500 text-xs uppercase tracking-widest" data-i18n="login_oidc_hint">Then unlock your vault passphrase</p>
+                <input type="password" id="login-key" class="w-full bg-zinc-900 border border-zinc-800 p-4 text-center text-white font-mono focus:outline-none focus:border-green-500 transition-colors" data-i18n-placeholder="ph_master_key" placeholder="ENTER MASTER KEY" required autofocus>
                 
-                <button type="submit" class="w-full bg-zinc-100 text-black font-bold py-3 uppercase tracking-widest hover:bg-white transition-all">
+                <button type="submit" class="w-full bg-zinc-100 text-black font-bold py-3 uppercase tracking-widest hover:bg-white transition-all disabled:opacity-55 disabled:cursor-wait disabled:hover:bg-zinc-100" data-i18n="btn_unlock_vault">
                     Unlock Vault
                 </button>
             </form>
@@ -398,21 +420,21 @@
 
     <!-- SYSTEM FREEZE OVERLAY -->
     <div id="system-freeze" class="hidden fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center space-y-6 backdrop-blur-sm">
-        <div class="text-red-500 font-bold text-2xl tracking-[0.5em] animate-pulse">SYSTEM_OFFLINE</div>
-        <div class="text-zinc-500 text-xs uppercase">Connection to secure nodes lost</div>
+        <div class="text-red-500 font-bold text-2xl tracking-[0.5em] animate-pulse" data-i18n="freeze_title">SYSTEM_OFFLINE</div>
+        <div class="text-zinc-500 text-xs uppercase" data-i18n="freeze_lede">Connection to secure nodes lost</div>
         
         <div class="flex gap-12 mb-4">
             <div class="flex flex-col items-center gap-3">
                 <div id="status-storage" class="w-3 h-3 rounded-full bg-zinc-800 shadow-[0_0_10px_rgba(0,0,0,0.5)]"></div>
-                <span class="text-[0.625rem] uppercase text-zinc-500 tracking-widest">Storage</span>
+                <span class="text-[0.625rem] uppercase text-zinc-500 tracking-widest" data-i18n="label_storage">Storage</span>
             </div>
             <div class="flex flex-col items-center gap-3">
                 <div id="status-bunker" class="w-3 h-3 rounded-full bg-zinc-800 shadow-[0_0_10px_rgba(0,0,0,0.5)]"></div>
-                <span class="text-[0.625rem] uppercase text-zinc-500 tracking-widest">Bunker</span>
+                <span class="text-[0.625rem] uppercase text-zinc-500 tracking-widest" data-i18n="label_bunker">Bunker</span>
             </div>
         </div>
 
-        <button id="btn-reconnect" class="border border-red-500 text-red-500 px-8 py-3 text-xs uppercase hover:bg-red-500 hover:text-black transition-all tracking-widest">
+        <button id="btn-reconnect" class="border border-red-500 text-red-500 px-8 py-3 text-xs uppercase hover:bg-red-500 hover:text-black transition-all tracking-widest" data-i18n="btn_reconnect">
             Re-establish Uplink
         </button>
     </div>
@@ -429,7 +451,7 @@
         <span id="app-version" class="tracking-widest"></span>
         <span class="text-zinc-800">|</span>
         <span class="pointer-events-auto">
-            Coded with <span class="text-red-500">&hearts;</span> by <a href="https://github.com/daniquir" target="_blank" class="text-zinc-500 hover:text-green-400">Daniquir</a>
+            <span data-i18n="footer_coded">Coded with</span> <span class="text-red-500">&hearts;</span> <span data-i18n="footer_by">by</span> <a href="https://github.com/daniquir" target="_blank" class="text-zinc-500 hover:text-green-400">Daniquir</a>
         </span>
     </footer>
 </body>

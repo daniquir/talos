@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Register username</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Register · username</h1>
+    <p class="lede">New account with new-password + confirm. Use a user <em>not</em> in the seed list → Talos should offer <strong>Save</strong>.</p>
+    <form id="register-form" autocomplete="on">
+      <label>
+        Username
+        <input id="identifier" name="username" type="text" autocomplete="username" required />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="new-password" required />
+      </label>
+      <label>
+        Confirm password
+        <input id="password-confirm" name="password_confirm" type="password" autocomplete="new-password" required />
+      </label>
+      <button type="submit">Create account</button>
+    </form>
+    <p id="result" aria-live="polite"></p>
+    <p class="hint">Try <code>newbie@acme.test</code> / any new password.</p>
+  </main>
+  <script src="shared.js"></script>
+  <script>acmeWireRegister({ idField: "identifier" });</script>
+</body>
+</html>

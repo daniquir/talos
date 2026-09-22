@@ -1,12 +1,13 @@
 use axum::Json;
 use axum::extract::Multipart;
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, header, HeaderMap};
 use axum::response::IntoResponse;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::atomic::{AtomicBool, Ordering}};
 use crate::models::{ActionRequest, BunkerTask};
 use crate::config::{CONFIG, DEBUG_MODE, STORE_PATH};
+use crate::user_ctx::{ensure_user_store, extract_user_sub, require_user_sub};
 use zip::write::FileOptions;
 use chrono::Utc;
 use base64::{Engine as _, engine::general_purpose};
@@ -15,6 +16,16 @@ use hmac::{Hmac, Mac};
 use hex;
 
 type HmacSha256 = Hmac<Sha256>;
+
+fn bunker_task(mode: &str, payload: String, user_sub: Option<&str>) -> BunkerTask {
+    BunkerTask {
+        payload,
+        mode: mode.to_string(),
+        signature: None,
+        user_sub: user_sub.map(|s| s.to_string()),
+        passphrase: None,
+    }
+}
 
 fn log_audit_event(action: &str, status: &str, details: &str) {
     let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
@@ -74,10 +85,20 @@ fn build_tree_recursive(base_path: &str, current_path: &str) -> Vec<TreeNode> {
     if let Ok(read_dir) = fs::read_dir(full_path) {
         for entry in read_dir.flatten() {
             let file_name = entry.file_name().into_string().unwrap();
-            // Filter out git and config files, but allow files that are just ".gpg"
-            if file_name == ".git" || file_name == ".gpg-id" || file_name == ".gitkeep" { continue; }
+            // Hide VCS / pass / Talos metadata — only dirs and *.gpg secrets belong in the tree
+            if file_name == ".git"
+                || file_name == ".gpg-id"
+                || file_name == ".gitkeep"
+                || file_name == ".talos-url-index.json"
+                || file_name.starts_with(".talos-")
+            {
+                continue;
+            }
 
             let is_dir = entry.path().is_dir();
+            if !is_dir && !file_name.ends_with(".gpg") {
+                continue;
+            }
             let path_str = StdPath::new(current_path).join(&file_name).to_str().unwrap().to_string();
             
             let children = if is_dir {
@@ -98,20 +119,244 @@ fn build_tree_recursive(base_path: &str, current_path: &str) -> Vec<TreeNode> {
     nodes
 }
 
-pub async fn list_tree() -> Json<Vec<TreeNode>> {
+pub async fn list_tree(headers: HeaderMap) -> Result<Json<Vec<TreeNode>>, StatusCode> {
     if *DEBUG_MODE { println!("--> [STORAGE] LIST TREE request"); }
-    let root_path = STORE_PATH.as_str();
-    let nodes = build_tree_recursive(root_path, "");
-    Json(nodes)
+    let user = require_user_sub(&headers)?;
+    let root_path = ensure_user_store(user.as_deref())?;
+    let nodes = build_tree_recursive(&root_path, "");
+    Ok(Json(nodes))
 }
 
-pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
-    // Validate path to prevent traversal attacks
-    if let Err(e) = validate_path(&req.path) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+fn flatten_secret_paths(nodes: &[TreeNode]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for node in nodes {
+        if node.is_dir {
+            if let Some(ref children) = node.children {
+                out.extend(flatten_secret_paths(children));
+            }
+        } else {
+            out.push((node.path.clone(), node.name.clone()));
+        }
+    }
+    out
+}
+
+fn normalize_hostname(hostname: &str) -> String {
+    let h = hostname.trim().to_lowercase();
+    h.strip_prefix("www.").unwrap_or(&h).to_string()
+}
+
+/// Extract `hostname` or `hostname:port` (non-default ports kept).
+/// Accepts full URLs or bare host[/path] values.
+fn authority_key(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let scheme = s
+        .split_once("://")
+        .map(|(sch, _)| sch.to_lowercase());
+    let without_scheme = s.split("://").nth(1).unwrap_or(s);
+    // Drop userinfo if present
+    let after_at = without_scheme.rsplit('@').next().unwrap_or(without_scheme);
+    let hostport = after_at.split('/').next()?.split('?').next()?.split('#').next()?;
+    if hostport.is_empty() {
+        return None;
     }
 
-    let file_path = format!("{}/{}.gpg", &*STORE_PATH, req.path);
+    let (hostname, port) = if hostport.starts_with('[') {
+        // [IPv6] or [IPv6]:port
+        let end = hostport.find(']')?;
+        let host = &hostport[1..end];
+        let rest = &hostport[end + 1..];
+        let port = rest.strip_prefix(':').filter(|p| !p.is_empty());
+        (host, port)
+    } else {
+        match hostport.rsplit_once(':') {
+            Some((h, p)) if !h.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+                (h, Some(p))
+            }
+            _ => (hostport, None),
+        }
+    };
+
+    if hostname.is_empty() {
+        return None;
+    }
+    let hostname = normalize_hostname(hostname);
+
+    let keep_port = match port {
+        Some(p) => {
+            let default = matches!(
+                (scheme.as_deref(), p),
+                (Some("http"), "80") | (Some("https"), "443") | (None, "80") | (None, "443")
+            );
+            !default
+        }
+        None => false,
+    };
+
+    if keep_port {
+        Some(format!("{}:{}", hostname, port.unwrap()))
+    } else {
+        Some(hostname)
+    }
+}
+
+fn hosts_match(query_host: &str, stored_url: &str) -> bool {
+    let Some(q) = authority_key(query_host) else {
+        return false;
+    };
+    let Some(s) = authority_key(stored_url) else {
+        return false;
+    };
+    if q == s {
+        return true;
+    }
+
+    // Subdomain match only when neither side carries an explicit non-default port.
+    let (q_host, q_port) = match q.rsplit_once(':') {
+        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h, Some(p)),
+        _ => (q.as_str(), None),
+    };
+    let (s_host, s_port) = match s.rsplit_once(':') {
+        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h, Some(p)),
+        _ => (s.as_str(), None),
+    };
+    if q_port != s_port {
+        return false;
+    }
+    // Only allow query as a subdomain of the stored host (not the reverse),
+    // so evil.example.com does not pull credentials stored for sibling hosts,
+    // and a stored entry for evil.bank.com never matches bank.com.
+    q_host.ends_with(&format!(".{}", s_host))
+}
+
+fn parse_pass_metadata(content: &str) -> (Option<String>, Option<String>) {
+    let mut user = None;
+    let mut url = None;
+    for line in content.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().to_string();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim().to_ascii_lowercase().as_str() {
+            "user" | "username" | "login" => user = Some(value),
+            "url" | "website" => url = Some(value),
+            _ => {}
+        }
+    }
+    (user, url)
+}
+
+async fn decrypt_metadata(store_root: &str, path: &str, user_sub: Option<&str>) -> Option<String> {
+    let file_path = format!("{}/{}.gpg", store_root, path);
+    let encrypted_bytes = fs::read(file_path).ok()?;
+    let encrypted_content = general_purpose::STANDARD.encode(&encrypted_bytes);
+    let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", shared_secret)
+        .json(&bunker_task("decrypt", encrypted_content, user_sub))
+        .send()
+        .await
+        .ok()?;
+
+    if !res.status().is_success() {
+        return None;
+    }
+    let data: Value = res.json().await.ok()?;
+    data["result"].as_str().map(|s| s.to_string())
+}
+
+/// Match secrets by host/URL using the plaintext metadata index (no bunker / no passwords).
+pub async fn match_secrets(
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
+    let host = params.get("host").cloned().unwrap_or_default();
+    if host.trim().is_empty() {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "host query parameter required"}))));
+    }
+    if *DEBUG_MODE {
+        println!("--> [STORAGE] MATCH request host={}", host);
+    }
+
+    let mut matches = Vec::new();
+    for entry in crate::url_index::all_entries_in(&root) {
+        let url_for_match = entry.url.clone().unwrap_or_default();
+        let path_hint = entry
+            .path
+            .split('/')
+            .last()
+            .unwrap_or("")
+            .to_string();
+
+        let matched = (!url_for_match.is_empty() && hosts_match(&host, &url_for_match))
+            || hosts_match(&host, &path_hint)
+            || hosts_match(&host, &entry.title);
+
+        if matched {
+            matches.push(json!({
+                "path": entry.path,
+                "title": entry.title,
+                "username": entry.username,
+                "url": entry.url,
+            }));
+        }
+    }
+
+    Ok((StatusCode::OK, Json(json!({ "matches": matches }))))
+}
+
+/// Rebuild URL index by decrypting metadata for every secret (requires unsealed bunker).
+pub async fn rebuild_url_index(headers: HeaderMap) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    if *DEBUG_MODE {
+        println!("--> [STORAGE] REBUILD URL INDEX");
+    }
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
+    let nodes = build_tree_recursive(&root, "");
+    let secrets = flatten_secret_paths(&nodes);
+    let mut entries = Vec::new();
+
+    for (path, title) in secrets {
+        let Some(content) = decrypt_metadata(&root, &path, user.as_deref()).await else {
+            continue;
+        };
+        let (username, url) = parse_pass_metadata(&content);
+        entries.push(crate::url_index::IndexEntry {
+            path,
+            title,
+            username,
+            url,
+        });
+    }
+
+    let count = entries.len();
+    crate::url_index::replace_all_in(&root, entries);
+    Ok((StatusCode::OK, Json(json!({ "status": "ok", "entries": count }))))
+}
+
+pub async fn decrypt_secret(
+    headers: HeaderMap,
+    Json(req): Json<ActionRequest>,
+) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
+    if let Err(e) = validate_path(&req.path) {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
+    }
+
+    let file_path = format!("{}/{}.gpg", root, req.path);
     let encrypted_bytes = fs::read(file_path).unwrap_or_else(|_| vec![]);
     let encrypted_content = general_purpose::STANDARD.encode(&encrypted_bytes);
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
@@ -120,18 +365,13 @@ pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json
     let client = reqwest::Client::new();
     match client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", shared_secret)
-        .json(&BunkerTask {
-            payload: encrypted_content,
-            mode: "decrypt".to_string(),
-            signature: None,
-        })
-        .send().await 
+        .json(&bunker_task("decrypt", encrypted_content, user.as_deref()))
+        .send().await
     {
         Ok(res) if res.status().is_success() => {
             let data: Value = res.json().await.unwrap_or(json!({"result": "Data error"}));
             let mut decrypted = data["result"].as_str().unwrap_or("").to_string();
 
-            // If revealing the secret is not explicitly requested, we obfuscate it.
             if !req.reveal.unwrap_or(false) {
                 if let Some(first_line_end) = decrypted.find('\n') {
                     decrypted.replace_range(..first_line_end, "__TALOS_HIDDEN_SECRET__");
@@ -139,13 +379,15 @@ pub async fn decrypt_secret(Json(req): Json<ActionRequest>) -> (StatusCode, Json
                     decrypted = "__TALOS_HIDDEN_SECRET__".to_string();
                 }
             }
-            (StatusCode::OK, Json(json!(decrypted)))
+            Ok((StatusCode::OK, Json(json!(decrypted))))
         },
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!("Error: Bunker unavailable or decryption failed")))
+        _ => Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!("Error: Bunker unavailable or decryption failed"))))
     }
 }
 
-pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
+pub async fn encrypt_and_save(headers: HeaderMap, Json(req): Json<ActionRequest>) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
     log_audit_event("storage_save", "started", &format!("saving to path: {}", req.path));
     
     if *DEBUG_MODE { println!("--> [STORAGE] SAVE request for: {}", req.path); }
@@ -153,12 +395,12 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
     // Validate path to prevent traversal attacks
     if let Err(e) = validate_path(&req.path) {
         log_audit_event("storage_save", "failed", &format!("path validation failed: {}", e));
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
     }
 
     if let Some(ref original_path) = req.original_path {
         if let Err(e) = validate_path(original_path) {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+            return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
         }
     }
 
@@ -170,16 +412,12 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
     let client = reqwest::Client::new();
     
     if payload.starts_with("__TALOS_KEEP_SECRET__") {
-        let file_path = format!("{}/{}.gpg", &*STORE_PATH, req.path);
+        let file_path = format!("{}/{}.gpg", root, req.path);
         let encrypted_content = fs::read_to_string(&file_path).unwrap_or_default();
         
         let decrypt_res = client.post(format!("{}/process", bunker_url))
             .header("X-Talos-Auth", &shared_secret)
-            .json(&BunkerTask {
-                payload: encrypted_content,
-                mode: "decrypt".to_string(),
-                signature: None,
-            })
+            .json(&bunker_task("decrypt", encrypted_content, user.as_deref()))
             .send().await;
             
         if let Ok(res) = decrypt_res {
@@ -194,7 +432,7 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
                 if let Some(signature) = data["signature"].as_str() {
                     if !verify_signature(&full_text, signature) {
                         log_audit_event("storage_save", "failed", "signature verification failed during decrypt");
-                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"})));
+                        return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"}))));
                     }
                 }
                 let old_pass = full_text.split('\n').next().unwrap_or("");
@@ -205,13 +443,13 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
         }
     }
 
+    let (index_user, index_url) = parse_pass_metadata(&payload);
+    let index_path = req.path.clone();
+    let index_original = req.original_path.clone();
+
     let res_result = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&BunkerTask {
-            payload: payload,
-            mode: "encrypt".to_string(),
-            signature: None,
-        })
+        .json(&bunker_task("encrypt", payload, user.as_deref()))
         .send().await;
 
     match res_result {
@@ -226,26 +464,26 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
             if let Some(signature) = data["signature"].as_str() {
                 if !verify_signature(&encrypted, signature) {
                     log_audit_event("storage_save", "failed", "signature verification failed during encrypt");
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"})));
+                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"}))));
                 }
             }
             
             let armored_gpg = encrypted;
             
             if armored_gpg.is_empty() {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Encryption failed"})));
+                return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Encryption failed"}))));
             }
 
-            let file_path = format!("{}/{}.gpg", &*STORE_PATH, req.path);
+            let file_path = format!("{}/{}.gpg", root, req.path);
             if let Some(parent) = std::path::Path::new(&file_path).parent() {
                 if let Err(e) = fs::create_dir_all(parent) {
                     println!("❌ [STORAGE] Error creating directory: {}", e);
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not create directory"})));
+                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not create directory"}))));
                 }
             }
             if let Err(e) = fs::write(&file_path, armored_gpg) {
                 println!("❌ [STORAGE] Error writing file: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not write secret to disk"})));
+                return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not write secret to disk"}))));
             }
             
             let mut commit_msg = format!("Update secret: {}", req.path);
@@ -253,22 +491,31 @@ pub async fn encrypt_and_save(Json(req): Json<ActionRequest>) -> (StatusCode, Js
             if let Some(original_path) = &req.original_path {
                 if &req.path != original_path {
                     // This is a move operation
-                    let old_file_path = format!("{}/{}.gpg", &*STORE_PATH, original_path);
+                    let old_file_path = format!("{}/{}.gpg", root, original_path);
                     if fs::remove_file(old_file_path).is_ok() {
                         if *DEBUG_MODE { println!("--> [STORAGE] Removed old file for move: {}", original_path); }
                         commit_msg = format!("Move secret from {} to {}", original_path, req.path);
                     }
                 }
             }
+
+            if let Some(ref original_path) = index_original {
+                if original_path != &index_path {
+                    crate::url_index::remove_entry_in(&root, original_path);
+                }
+            }
+            crate::url_index::upsert_entry_in(&root, &index_path, index_user, index_url);
             
-            commit_changes(&commit_msg);
-            (StatusCode::OK, Json(json!({"status": "OK"})))
+            commit_changes(&root, &commit_msg);
+            Ok((StatusCode::OK, Json(json!({"status": "OK"}))))
         },
-        _ => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Bunker unavailable"})))
+        _ => Ok((StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Bunker unavailable"}))))
     }
 }
 
-pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
+pub async fn delete_entry(headers: HeaderMap, Json(req): Json<ActionRequest>) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
     log_audit_event("storage_delete", "started", &format!("deleting path: {}", req.path));
     
     if *DEBUG_MODE { println!("--> [STORAGE] DELETE request for: {}", req.path); }
@@ -276,20 +523,21 @@ pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<V
     // Validate path to prevent traversal attacks
     if let Err(e) = validate_path(&req.path) {
         log_audit_event("storage_delete", "failed", &format!("path validation failed: {}", e));
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
     }
 
-    let store_path = STORE_PATH.as_str();
+    let store_path = root.as_str();
     let path_as_dir = StdPath::new(store_path).join(&req.path);
     let path_as_file = StdPath::new(store_path).join(format!("{}.gpg", req.path));
 
     if path_as_file.is_file() {
         // Attempt to delete it as a file
         if fs::remove_file(&path_as_file).is_ok() {
-            commit_changes(&format!("Delete secret: {}", req.path));
-            (StatusCode::OK, Json(json!({"status": "OK"})))
+            crate::url_index::remove_entry_in(&root, &req.path);
+            commit_changes(&root, &format!("Delete secret: {}", req.path));
+            Ok((StatusCode::OK, Json(json!({"status": "OK"}))))
         } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not delete file"})))
+            Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not delete file"}))))
         }
     } else if path_as_dir.is_dir() {
         // Attempt to delete it as a directory
@@ -302,44 +550,51 @@ pub async fn delete_entry(Json(req): Json<ActionRequest>) -> (StatusCode, Json<V
 
                 if non_gitkeep_entries == 0 {
                     if fs::remove_dir_all(&path_as_dir).is_ok() {
-                        commit_changes(&format!("Delete category: {}", req.path));
-                        (StatusCode::OK, Json(json!({"status": "OK"})))
+                        crate::url_index::remove_entry_in(&root, &req.path);
+                        commit_changes(&root, &format!("Delete category: {}", req.path));
+                        Ok((StatusCode::OK, Json(json!({"status": "OK"}))))
                     } else {
-                        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not delete directory"})))
+                        Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not delete directory"}))))
                     }
                 } else {
-                    (StatusCode::CONFLICT, Json(json!({"error": "Category is not empty. Please remove all secrets and sub-categories first."})))
+                    Ok((StatusCode::CONFLICT, Json(json!({"error": "Category is not empty. Please remove all secrets and sub-categories first."}))))
                 }
             }
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not read directory contents"})))
+            Err(_) => Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not read directory contents"}))))
         }
     } else {
-        (StatusCode::NOT_FOUND, Json(json!({"error": "Entry not found"})))
+        Ok((StatusCode::NOT_FOUND, Json(json!({"error": "Entry not found"}))))
     }
 }
 
-pub async fn create_category(Json(req): Json<ActionRequest>) -> (StatusCode, Json<Value>) {
+pub async fn create_category(headers: HeaderMap, Json(req): Json<ActionRequest>) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
     if *DEBUG_MODE { println!("--> [STORAGE] CREATE CATEGORY request for: {}", req.path); }
 
     // Validate path to prevent traversal attacks
     if let Err(e) = validate_path(&req.path) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
     }
 
-    let dir_path = format!("{}/{}", &*STORE_PATH, req.path);
+    let dir_path = format!("{}/{}", root, req.path);
     
     if let Err(_) = fs::create_dir_all(&dir_path) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not create directory"})));
+        return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not create directory"}))));
     }
 
     let _ = fs::write(format!("{}/.gitkeep", dir_path), "");
-    commit_changes(&format!("Add category: {}", req.path));
-    (StatusCode::OK, Json(json!({"status": "OK"})))
+    commit_changes(&root, &format!("Add category: {}", req.path));
+    Ok((StatusCode::OK, Json(json!({"status": "OK"}))))
 }
 
-pub async fn download_backup() -> impl IntoResponse {
+pub async fn download_backup(headers: HeaderMap) -> Result<impl IntoResponse, StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let store_path_owned = ensure_user_store(user.as_deref())?;
+    let store_path = store_path_owned.as_str();
+
     if *DEBUG_MODE { println!("--> [STORAGE] BACKUP request initiated"); }
-    let store_path = STORE_PATH.as_str();
+    
     let mut buf = Vec::new();
     
     {
@@ -369,16 +624,18 @@ pub async fn download_backup() -> impl IntoResponse {
 
     log_audit_event("storage_backup", "success", &format!("backup created with checksum: {}", checksum));
 
-    (
+    Ok((
         [
             (header::CONTENT_TYPE, "application/zip"),
             (header::CONTENT_DISPOSITION, "attachment; filename=\"talos_backup.zip\""),
         ],
         buf,
-    )
+    ))
 }
 
-pub async fn restore_backup(mut multipart: Multipart) -> (StatusCode, Json<Value>) {
+pub async fn restore_backup(headers: HeaderMap, mut multipart: Multipart) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
     log_audit_event("storage_restore", "started", "restoring from backup");
     
     if *DEBUG_MODE { println!("--> [STORAGE] RESTORE request initiated"); }
@@ -395,7 +652,7 @@ pub async fn restore_backup(mut multipart: Multipart) -> (StatusCode, Json<Value
                 Ok(a) => a,
                 Err(_) => {
                     log_audit_event("storage_restore", "failed", "invalid zip file");
-                    return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid zip file"})));
+                    return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid zip file"}))));
                 },
             };
             
@@ -410,7 +667,7 @@ pub async fn restore_backup(mut multipart: Multipart) -> (StatusCode, Json<Value
                             let stored_checksum = checksum_content.trim();
                             if stored_checksum != expected_checksum {
                                 log_audit_event("storage_restore", "failed", "integrity check failed - checksum mismatch");
-                                return (StatusCode::BAD_REQUEST, Json(json!({"error": "Integrity verification failed"})));
+                                return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "Integrity verification failed"}))));
                             }
                         }
                     }
@@ -423,7 +680,7 @@ pub async fn restore_backup(mut multipart: Multipart) -> (StatusCode, Json<Value
                 log_audit_event("storage_restore", "success", "integrity verification passed");
             }
 
-            let store_path = STORE_PATH.as_str();
+            let store_path = root.as_str();
             
             // Extract files
             for i in 0..archive.len() {
@@ -445,28 +702,36 @@ pub async fn restore_backup(mut multipart: Multipart) -> (StatusCode, Json<Value
                 }
             }
             
-            commit_changes("Restored from backup");
-            return (StatusCode::OK, Json(json!({"status": "Restored successfully"})));
+            commit_changes(&root, "Restored from backup");
+            return Ok((StatusCode::OK, Json(json!({"status": "Restored successfully"}))));
         }
     }
-    (StatusCode::BAD_REQUEST, Json(json!({"error": "No backup file provided"})))
+    Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "No backup file provided"}))))
 }
 
 #[derive(serde::Deserialize)]
 pub struct InitializeRequest {
     pub key: String,
+    #[serde(default)]
+    pub user_sub: Option<String>,
 }
 
-pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoResponse {
+pub async fn initialize_bunker(headers: HeaderMap, Json(req): Json<InitializeRequest>) -> impl IntoResponse {
     if *DEBUG_MODE { println!("--> [STORAGE] INITIALIZE request received"); }
+    let user_from_hdr = extract_user_sub(&headers).ok().flatten();
+    let user_sub = req.user_sub.clone().or(user_from_hdr);
+    let user_ref = user_sub.as_deref();
+    if let Some(sub) = user_ref {
+        let _ = ensure_user_store(Some(sub));
+    }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
 
-    // Check if the bunker is already initialized
+    // Check if the bunker is already initialized for this user
     let check_res: serde_json::Value = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&BunkerTask { payload: "".to_string(), mode: "check".to_string(), signature: None })
+        .json(&bunker_task("check", String::new(), user_ref))
         .send().await.unwrap().json().await.unwrap();
     
     if check_res["result"].as_str() != Some("UNINITIALIZED") {
@@ -476,11 +741,7 @@ pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoR
     // Send Initialize Command
     let init_res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&BunkerTask {
-            payload: req.key,
-            mode: "initialize".to_string(),
-            signature: None,
-        })
+        .json(&bunker_task("initialize", req.key, user_ref))
         .send().await;
 
     match init_res {
@@ -500,9 +761,18 @@ pub async fn initialize_bunker(Json(req): Json<InitializeRequest>) -> impl IntoR
 pub struct ImportRequest {
     pub key: String,
     pub passphrase: String,
+    #[serde(default)]
+    pub user_sub: Option<String>,
 }
 
-pub async fn import_bunker_key(Json(req): Json<ImportRequest>) -> impl IntoResponse {
+pub async fn import_bunker_key(headers: HeaderMap, Json(req): Json<ImportRequest>) -> impl IntoResponse {
+    let user_from_hdr = extract_user_sub(&headers).ok().flatten();
+    let user_sub = req.user_sub.clone().or(user_from_hdr);
+    let user_ref = user_sub.as_deref();
+    if let Some(sub) = user_ref {
+        let _ = ensure_user_store(Some(sub));
+    }
+
     if *DEBUG_MODE { println!("--> [STORAGE] IMPORT KEY request received"); }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
@@ -512,11 +782,13 @@ pub async fn import_bunker_key(Json(req): Json<ImportRequest>) -> impl IntoRespo
     // We send the private key block and the passphrase to unlock/verify it
     let import_res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&json!({
-            "mode": "import",
-            "payload": req.key,
-            "passphrase": req.passphrase 
-        }))
+        .json(&BunkerTask {
+            payload: req.key,
+            mode: "import".to_string(),
+            signature: None,
+            user_sub: user_sub.clone(),
+            passphrase: Some(req.passphrase),
+        })
         .send().await;
 
     match import_res {
@@ -544,7 +816,7 @@ pub async fn backup_bunker_key() -> impl IntoResponse {
     // Request export from Bunker
     let res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&json!({ "mode": "export_key", "payload": "" }))
+        .json(&bunker_task("export_key", String::new(), None))
         .send().await;
 
     match res {
@@ -564,9 +836,17 @@ pub async fn backup_bunker_key() -> impl IntoResponse {
 #[derive(serde::Deserialize)]
 pub struct UnlockRequest {
     pub key: String,
+    #[serde(default)]
+    pub user_sub: Option<String>,
 }
 
-pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse {
+pub async fn unlock_bunker(headers: HeaderMap, Json(req): Json<UnlockRequest>) -> impl IntoResponse {
+    let user_from_hdr = extract_user_sub(&headers).ok().flatten();
+    let user_sub = req.user_sub.clone().or(user_from_hdr);
+    let user_ref = user_sub.as_deref();
+    if let Some(sub) = user_ref {
+        let _ = ensure_user_store(Some(sub));
+    }
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
@@ -574,15 +854,25 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
     // 1. Send Unlock Command (Inject Key into Bunker RAM)
     let unlock_res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&BunkerTask {
-            payload: req.key.clone(),
-            mode: "unlock".to_string(),
-            signature: None,
-        })
+        .json(&bunker_task("unlock", req.key.clone(), user_ref))
         .send().await;
 
-    if unlock_res.is_err() || !unlock_res.unwrap().status().is_success() {
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Bunker unreachable"})));
+    let unlock_body: Value = match unlock_res {
+        Ok(response) if response.status().is_success() => response.json().await.unwrap_or_default(),
+        _ => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Bunker unreachable"}))),
+    };
+    let unlock_result = unlock_body["result"].as_str().unwrap_or("");
+    if unlock_result.starts_with("ERROR") || unlock_result == "UNINITIALIZED" {
+        return (StatusCode::UNAUTHORIZED, Json(json!({
+            "error": if unlock_result == "UNINITIALIZED" || unlock_result.contains("GPG") {
+                "Vault not initialized — create a vault passphrase first"
+            } else {
+                "Vault unlock failed"
+            }
+        })));
+    }
+    if unlock_result != "VAULT_UNSEALED" {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Vault unlock failed"})));
     }
 
     // 2. Verify Key Validity (The "True Master Key" Check)
@@ -593,11 +883,7 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
     // A. Encrypt
     let enc_res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&BunkerTask {
-            payload: test_payload.to_string(),
-            mode: "encrypt".to_string(),
-            signature: None,
-        })
+        .json(&bunker_task("encrypt", test_payload.to_string(), user_ref))
         .send().await;
 
     let encrypted = match enc_res {
@@ -607,18 +893,14 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
             result
         },
         _ => {
-            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Key rejected (Encryption failed)"})))
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Key rejected (Encryption failed)"})));
         }
     };
 
     // B. Decrypt
     let dec_res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&BunkerTask {
-            payload: encrypted,
-            mode: "decrypt".to_string(),
-            signature: None,
-        })
+        .json(&bunker_task("decrypt", encrypted, user_ref))
         .send().await;
 
     let decrypted = match dec_res {
@@ -626,22 +908,26 @@ pub async fn unlock_bunker(Json(req): Json<UnlockRequest>) -> impl IntoResponse 
             let data: serde_json::Value = res.json().await.unwrap_or_default();
             data["result"].as_str().unwrap_or("").to_string()
         },
-        _ => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Key rejected (Decryption failed)"})))
+        _ => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Key rejected (Decryption failed)"}))),
     };
 
     if decrypted.trim() == test_payload {
+        // Refresh URL index while bunker is unsealed so match works without auth later.
+        let _ = rebuild_url_index(headers).await;
         (StatusCode::OK, Json(json!({"status": "unlocked"})))
     } else {
         (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid Master Key"})))
     }
 }
 
-fn commit_changes(msg: &str) {
-    let store_path = STORE_PATH.as_str();
-    
+fn commit_changes(store_path: &str, msg: &str) {
     if CONFIG.backend.r#type == "git" {
-        // Only run git commands if the backend is git
-        let _ = std::process::Command::new("git").args(["-C", store_path, "add", "."]).status();
+        // Never push the plaintext URL index to the remote.
+        crate::url_index::ensure_index_ignored_for_commit(store_path);
+        let _ = std::process::Command::new("git").args(["-C", store_path, "add", "-A"]).status();
+        let _ = std::process::Command::new("git")
+            .args(["-C", store_path, "reset", "HEAD", "--", ".talos-url-index.json"])
+            .status();
         let _ = std::process::Command::new("git").args(["-C", store_path, "commit", "-m", msg]).status();
         
         if *DEBUG_MODE { println!("--> [STORAGE] Pushing changes to remote git..."); }
@@ -652,15 +938,85 @@ fn commit_changes(msg: &str) {
 }
 
 // Health check handler to verify connectivity with the Bunker
-pub async fn storage_health_check() -> Json<Value> {
+
+#[derive(serde::Deserialize)]
+pub struct OperatorUnsealRequest {
+    pub key: String,
+}
+
+pub async fn operator_unseal(Json(req): Json<OperatorUnsealRequest>) -> impl IntoResponse {
+    let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+    let client = reqwest::Client::new();
+    let res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
+        .json(&bunker_task("operator_unseal", req.key, None))
+        .send().await;
+    match res {
+        Ok(r) if r.status().is_success() => {
+            let data: Value = r.json().await.unwrap_or_default();
+            if data["result"].as_str() == Some("OPERATOR_UNSEALED") {
+                (StatusCode::OK, Json(json!({"status": "operator_unsealed"})))
+            } else {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": data["result"]})))
+            }
+        }
+        _ => (StatusCode::BAD_GATEWAY, Json(json!({"error": "Bunker unreachable"})))
+    }
+}
+
+pub async fn operator_status() -> impl IntoResponse {
+    let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+    let client = reqwest::Client::new();
+    let res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
+        .json(&bunker_task("operator_status", String::new(), None))
+        .send().await;
+    match res {
+        Ok(r) if r.status().is_success() => {
+            let data: Value = r.json().await.unwrap_or_default();
+            (StatusCode::OK, Json(json!({"status": data["result"]})))
+        }
+        _ => (StatusCode::BAD_GATEWAY, Json(json!({"error": "Bunker unreachable"})))
+    }
+}
+
+pub async fn unlock_wrapped(headers: HeaderMap) -> Result<impl IntoResponse, StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let sub = user.ok_or(StatusCode::UNAUTHORIZED)?;
+    let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
+    let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
+    let client = reqwest::Client::new();
+    let res = client.post(format!("{}/process", bunker_url))
+        .header("X-Talos-Auth", &shared_secret)
+        .json(&bunker_task("unlock_wrapped", String::new(), Some(&sub)))
+        .send().await;
+    match res {
+        Ok(r) if r.status().is_success() => {
+            let data: Value = r.json().await.unwrap_or_default();
+            if data["result"].as_str() == Some("VAULT_UNSEALED") {
+                let _ = rebuild_url_index(headers.clone()).await;
+                Ok((StatusCode::OK, Json(json!({"status": "unlocked"}))))
+            } else {
+                Ok((StatusCode::UNAUTHORIZED, Json(json!({"error": data["result"]}))))
+            }
+        }
+        _ => Ok((StatusCode::BAD_GATEWAY, Json(json!({"error": "Bunker unreachable"}))))
+    }
+}
+
+pub async fn storage_health_check(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
+    let user = extract_user_sub(&headers)?;
     let client = reqwest::Client::new();
     let bunker_url = env::var("BUNKER_URL").unwrap_or_else(|_| "http://talos-bunker:5000".to_string());
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
-    
-    // Storage communicates with Bunker over the isolated private network
+
+    // Storage communicates with Bunker over the isolated private network.
+    // When identity headers are present, check that user's vault (not legacy).
     let bunker_res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&json!({"payload":"", "mode":"check"}))
+        .json(&bunker_task("check", String::new(), user.as_deref()))
         .send().await;
 
     let bunker_status = match bunker_res {
@@ -670,9 +1026,10 @@ pub async fn storage_health_check() -> Json<Value> {
         },
         _ => "OFFLINE".to_string(),
     };
-    
-    Json(json!({
+
+    Ok(Json(json!({
         "storage": true, // Storage is reachable if this code executes
-        "bunker": bunker_status
-    }))
+        "bunker": bunker_status,
+        "user_scoped": user.is_some(),
+    })))
 }
