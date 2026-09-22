@@ -23,6 +23,9 @@
 *   **Git Integration**: Optional automatic versioning and remote backup to a Git repository.
 *   **Digital Freeze Mode**: System automatically locks down UI if connection to secure nodes is lost.
 *   **Dual Access**: Password and mTLS (Diplomatic Pass).
+*   **Browser extension (talos-vault)**: Chrome/Firefox/Edge add-on — match, autofill, vault tree, copy/edit, generator, capture, auto-lock, shortcuts (`talos-extension/`). Store name **talos-vault** (AMO; reuse on other stores — bare `talos` was taken).
+*   **i18n**: English and Spanish UI for the web vault and the extension (shared preference via `/api/settings`).
+*   **Multi-user (Keycloak)**: OIDC proves identity and isolates each user’s vault; a separate **vault passphrase** decrypts GPG data (`TALOS_CUSTODY_MODE=strict` by default). See [docs/MULTIUSER.md](docs/MULTIUSER.md).
 
 ## 🏗 Architecture
 
@@ -113,6 +116,21 @@ This mode stores secrets only in the local Docker volume. You are responsible fo
 3. **Access Interface**
    Open `http://localhost:3000` in your browser.
 
+### Production (kanda-server)
+
+Do **not** run the default compose on the server: it starts Keycloak `start-dev`. Use the prod overlay and the existing NDK Keycloak.
+
+Official images: **`kandacloud/talos`** (`{version}-web`, `-storage`, `-bunker`).
+
+```bash
+cp -n .env.prod.example .env.prod
+# fill SHARED_SECRET + OIDC_*; TALOS_IMAGE=kandacloud/talos
+docker compose -f docker-compose.prod.yaml --env-file .env.prod pull
+docker compose -f docker-compose.prod.yaml --env-file .env.prod up -d --no-build
+```
+
+Full checklist (DNS, Apache, realm `talos`, first login): [docs/PRODUCTION.md](docs/PRODUCTION.md). Releases: [docs/RELEASE.md](docs/RELEASE.md).
+
 ### Local development (sample data)
 
 For faster iteration with a known master key and seeded secrets:
@@ -172,6 +190,9 @@ The web interface is built with vanilla JavaScript using ES Modules for maintain
 - `js/app.js`: Main controller and event orchestration.
 - `js/api.js`: Data layer handling Fetch requests to the backend.
 - `js/ui.js`: DOM manipulation and visual effects.
+
+### Browser extension
+See [talos-extension/README.md](talos-extension/README.md) to load the unpacked MV3 extension against a running Talos instance (`POST /api/auth/token`, authenticated `GET /api/match`). Multi-user / Keycloak: [docs/MULTIUSER.md](docs/MULTIUSER.md).
 
 > **Note**: This project is a personal portfolio piece designed to showcase architectural patterns, security considerations, and full-stack development in Rust.
 

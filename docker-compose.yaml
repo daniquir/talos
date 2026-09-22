@@ -1,4 +1,30 @@
 services:
+  # Identity: Keycloak (user lifecycle; not cryptographic custody)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: talos-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KC_HTTP_PORT=8080
+      - KC_HOSTNAME_STRICT=false
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./dev/keycloak/talos-realm.json:/opt/keycloak/data/import/talos-realm.json:ro
+      - ./dev/keycloak/themes:/opt/keycloak/themes:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - net_public
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
   # LAYER 1: The Web (Public)
   talos-web:
     build: ./talos-web
@@ -9,11 +35,23 @@ services:
     environment:
       - DEBUG=false
       - DATABASE_URL=sqlite:/data/talos.db
+      - MULTIUSER=${MULTIUSER:-true}
+      - TALOS_CUSTODY_MODE=${TALOS_CUSTODY_MODE:-strict}
+      - OIDC_ISSUER=${OIDC_ISSUER:-http://localhost:8080/realms/talos}
+      - OIDC_ISSUER_INTERNAL=${OIDC_ISSUER_INTERNAL:-http://keycloak:8080/realms/talos}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-talos-web}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-talos-web-dev-secret}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:3000/api/auth/oidc/callback}
+      - SHARED_SECRET=${SHARED_SECRET:-changeme_in_production}
+      - STORAGE_URL=http://talos-storage:4000
     volumes:
       - ./data/web:/data
     networks:
       - net_public  # Accessible from your browser
       - net_middleware # Secure channel to Storage
+    depends_on:
+      - keycloak
+      - talos-storage
     restart: always
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
@@ -46,6 +84,7 @@ services:
       - GPG_ID=${GPG_ID}
       - DEBUG=false
       - SHARED_SECRET=${SHARED_SECRET:-changeme_in_production}
+      - MULTIUSER=${MULTIUSER:-true}
     volumes:
       - ./data/password-store:/home/talosuser/.password-store:rw
       - ./config:/app/config:ro
@@ -85,6 +124,13 @@ services:
       - GPG_ID=${GPG_ID}
       - DEBUG=false
       - SHARED_SECRET=${SHARED_SECRET:-changeme_in_production}
+      - MULTIUSER=${MULTIUSER:-true}
+      - TALOS_CUSTODY_MODE=${TALOS_CUSTODY_MODE:-strict}
+      - GNUPG_USERS_DIR=/home/talos/.gnupg-users
+      - WRAPPED_KEYS_DIR=/home/talos/.talos-wrapped
+    volumes:
+      - ./data/bunker-gnupg-users:/home/talos/.gnupg-users:rw
+      - ./data/bunker-wrapped:/home/talos/.talos-wrapped:rw
     networks:
       - net_private # Only sees Storage, no one else sees it
     restart: always

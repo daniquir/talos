@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Register email</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Register · email</h1>
+    <p class="lede">Email + new-password + confirm → Save offer for a non-seed identity.</p>
+    <form id="register-form" autocomplete="on">
+      <label>
+        Email
+        <input id="identifier" name="email" type="email" autocomplete="email" required />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="new-password" required />
+      </label>
+      <label>
+        Confirm password
+        <input id="password-confirm" name="password_confirm" type="password" autocomplete="new-password" required />
+      </label>
+      <button type="submit">Create account</button>
+    </form>
+    <p id="result" aria-live="polite"></p>
+  </main>
+  <script src="shared.js"></script>
+  <script>acmeWireRegister({ idField: "identifier" });</script>
+</body>
+</html>

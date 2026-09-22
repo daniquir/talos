@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — Two steps username</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>Two steps username</h1>
+    <p class="lede">Identity step first (username only), then password.</p>
+    <form id="login-form" autocomplete="on">
+      <div class="step" id="step-id">
+        <label>
+          Username
+          <input id="identifier" name="username" type="text" autocomplete="username" required />
+        </label>
+        <button type="button" id="btn-next">Continue</button>
+      </div>
+      <div class="step" id="step-pass" hidden>
+        <label>
+          Password
+          <input id="password" name="password" type="password" autocomplete="current-password" />
+        </label>
+        <div class="actions">
+          <button type="button" class="secondary" id="btn-back">Back</button>
+          <button type="submit">Sign in</button>
+        </div>
+      </div>
+    </form>
+    <p id="result" aria-live="polite"></p>
+    <p class="hint">Talos should offer multiple matches for this host. Any seeded account can sign in.</p>
+  </main>
+  <script src="shared.js"></script>
+  <script>acmeWireTwoStep({ idField: "identifier" });</script>
+</body>
+</html>

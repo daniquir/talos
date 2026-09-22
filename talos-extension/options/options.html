@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https: http://127.0.0.1:* http://localhost:* http://[::1]:*; object-src 'none'; base-uri 'self'" />
+  <title>talos-vault // settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <h1>talos-vault</h1>
+    <p class="lede" data-i18n="ext_options_lede">Point the agent at your vault-os node. HTTPS is required except localhost.</p>
+
+    <label class="field">
+      <span data-i18n="ext_server_url">Server URL</span>
+      <input type="url" id="server-url" placeholder="https://talos.example.com" />
+    </label>
+
+    <label class="field">
+      <span data-i18n="ext_oidc_issuer">OIDC issuer (Keycloak realm)</span>
+      <input type="url" id="oidc-issuer" placeholder="http://localhost:8080/realms/talos" />
+    </label>
+
+    <label class="field">
+      <span data-i18n="ext_oidc_client">OIDC client id</span>
+      <input type="text" id="oidc-client" placeholder="talos-extension" />
+    </label>
+
+    <label class="field">
+      <span data-i18n="ext_language">Language</span>
+      <select id="ui-language">
+        <option value="auto" data-i18n="ext_lang_auto">Auto (browser)</option>
+        <option value="en" data-i18n="ext_lang_en">English</option>
+        <option value="es" data-i18n="ext_lang_es">Spanish</option>
+      </select>
+    </label>
+
+    <label class="check">
+      <input type="checkbox" id="persist-session" />
+      <span>
+        <strong data-i18n="ext_persist_session">Keep unlocked until browser closes</strong>
+        <small data-i18n="ext_persist_session_help">
+          Stores only the short-lived API token in storage.session
+          (cleared when the browser exits). The master key is never saved.
+          Default is memory-only (safer; may re-prompt after the worker sleeps).
+        </small>
+      </span>
+    </label>
+    <p id="session-api-warn" class="status err" hidden data-i18n="ext_session_api_warn">
+      This browser has no storage.session API — the option cannot be enabled.
+    </p>
+
+    <label class="field">
+      <span data-i18n="ext_auto_lock">Auto-lock after idle</span>
+      <select id="auto-lock">
+        <option value="0" data-i18n="ext_auto_lock_off">Off</option>
+        <option value="5" data-i18n="ext_auto_lock_5">5 minutes</option>
+        <option value="15" data-i18n="ext_auto_lock_15">15 minutes</option>
+        <option value="30" data-i18n="ext_auto_lock_30">30 minutes</option>
+      </select>
+      <small class="hint" data-i18n="ext_auto_lock_help">Locks the extension session after idle time (requires unlock again). Works with or without session persist.</small>
+    </label>
+
+    <div class="row">
+      <button type="button" id="btn-save" class="primary" data-i18n="ext_btn_save">Save</button>
+      <button type="button" id="btn-test" class="secondary" data-i18n="ext_btn_test">Test connection</button>
+    </div>
+
+    <p id="status" class="status" hidden></p>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

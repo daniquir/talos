@@ -22,6 +22,7 @@ RUN chmod +x /usr/local/bin/reveal-backup && \
     chmod +x /usr/local/bin/entrypoint.sh && \
     addgroup -g 1000 talos && \
     adduser -D -u 1000 -G talos talos && \
+    mkdir -p /home/talos/.gnupg-users /home/talos/.talos-wrapped && \
     chown -R talos:talos /home/talos
 
 USER talos

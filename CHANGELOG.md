@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [1.2.0] - 2026-09-22
+
+Production cut for kanda-server: Keycloak multi-user + browser extension (**talos-vault**). Official Docker image: **`kandacloud/talos`** (`{ver}-web|storage|bunker`). Lab remains `docker-compose.dev.yaml`; production is `docker-compose.prod.yaml` (no bundled `start-dev` Keycloak). See [docs/PRODUCTION.md](docs/PRODUCTION.md) and [docs/RELEASE.md](docs/RELEASE.md).
+
+### Added
+- Auth status reports per-user vault initialization (OIDC `sub`), not the legacy shared keyring
+- `dev-up.sh` creates/chowns `bunker-gnupg-users` + `bunker-wrapped` as uid 1000 (required for MULTIUSER)
+- `dev-seed.sh` supports Keycloak multi-user (password grant + `/api/auth/token/oidc`, auto-init vault)
+- Storage vault routes require signed `X-Talos-User-Sub` when `MULTIUSER=true`
+- Keycloak login theme `talos` (retro CRT / Fira Code, aligned with vault-os UI)
+- **Keycloak multi-user**: OIDC identity (`talos` realm), per-user vaults under `users/{sub}/`, per-user GPG homes in bunker
+- Dual-door multi-user auth: Keycloak for identity/`sub` isolation; vault passphrase for GPG decrypt (`strict` default — passphrase is never stored in Keycloak)
+- `TALOS_CUSTODY_MODE=strict|convenience` with optional operator KEK unseal + wrapped vault passphrases
+- Web: Sign in with Keycloak + vault passphrase unlock; extension OIDC PKCE (`identity`) + `/api/auth/token/oidc`
+- HMAC-signed `X-Talos-User-Sub` between web → storage → bunker
+- Docs: [docs/MULTIUSER.md](docs/MULTIUSER.md)
+- Browser extension MVP (`talos-extension/`): unlock with master key, match by host, one-click autofill (Chrome/Firefox MV3)
+- Authenticated `GET /api/match?host=` via plaintext URL index (no passwords; Bearer/session required)
+- URL index maintained on save/delete and rebuilt on bunker unlock (`POST /api/match/reindex`)
+- Extension toolbar badge with match count while unlocked
+- Optional browser-session unlock: Bearer mirrored to `chrome.storage.session` when enabled in extension settings (master key never stored)
+- Extension Save/Update capture (Firefox-style submit/navigation) with tree picker for new secrets
+- Extension popup Vault tab: browse the full vault tree (search, expand folders, click to autofill)
+- Extension v1.0: copy user/password, view/edit secrets (notes), password generator, idle auto-lock (5/15/30m), context menu fill, all-frames + open shadow DOM, keyboard shortcuts, open vault web from popup, packaging script for CWS/AMO
+- Extension performance: coalesce/cache MATCH, skip vault origin, debounce badge + MutationObserver, storage-only i18n in content frames
+- UI internationalization (English / Spanish) for vault web UI and browser extension
+- Shared UI language preference via `GET/PUT /api/settings` (SQLite; web + extension stay in sync)
+- `POST /api/auth/token` — issue Bearer API tokens for extension clients (15m TTL, in-memory)
+- Dual auth on vault APIs: session cookie **or** `Authorization: Bearer`
+
+### Changed
+- Autofill: match/suggest only while unlocked; unlock only in the extension popup (never on web pages)
+- Web unlock button shows busy/disabled state while authenticating (parity with extension)
+- Web UI uses the extension icon as favicon and header/login logo
+- Host matching: only exact host or query-as-subdomain of stored URL (no reverse match)
+- Extension Bearer token TTL reduced to **15 minutes**; default idle auto-lock **15 minutes**
+- Extension host permissions: removed broad `http://*/*` (HTTPS + loopback HTTP only)
+- Session cookies use SameSite=Lax when OIDC redirect is enabled
+
+### Security
+- Removed wildcard CORS (extension uses host permissions)
+- `GET /api/match` requires authentication (no anonymous vault metadata probing); rate-limited for DoS resistance
+- `PUT /api/settings` requires auth; login-screen language stays local until unlock
+- Capture no longer writes passwords to page `sessionStorage` (extension session stash only)
+- `.talos-url-index.json` gitignored and excluded from git commits/pushes
+- Extension refuses non-HTTPS server URLs except localhost / 127.0.0.1 / ::1
+- Master key unlock rejected from content scripts; popup-only unlock with pending fill handoff
+- Extension page CSP tightened; clipboard clear scheduled after password copy (best-effort)
+- Keycloak manages users; vault crypto remains bunker-side (OIDC is not a substitute for GPG custody in `strict` mode)
 ## [1.1.1] - 2026-08-06
 
 ### Added

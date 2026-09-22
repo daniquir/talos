@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ACME // NODE — Fake login lab</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <p class="brand">ACME // LAB</p>
+    <h1>Fake login variants</h1>
+    <p class="lede">
+      Extension test bench on <code>127.0.0.1:8765</code>. Same host for every page so Talos
+      should list <strong>four</strong> vault matches — pick any account.
+    </p>
+
+    <h2 class="section">Login / autofill</h2>
+    <nav class="variants" aria-label="Login variants">
+      <a href="one-step-user.html">
+        <strong>One step · username</strong>
+        <span>user + password together</span>
+      </a>
+      <a href="one-step-email.html">
+        <strong>One step · email</strong>
+        <span>type=email + password</span>
+      </a>
+      <a href="one-step-phone.html">
+        <strong>One step · phone</strong>
+        <span>type=tel + password</span>
+      </a>
+      <a href="two-step-user.html">
+        <strong>Two steps · username</strong>
+        <span>identity first, then password</span>
+      </a>
+      <a href="two-step-email.html">
+        <strong>Two steps · email</strong>
+        <span>email first, then password</span>
+      </a>
+      <a href="two-step-phone.html">
+        <strong>Two steps · phone</strong>
+        <span>phone first, then password</span>
+      </a>
+    </nav>
+
+    <h2 class="section">Capture · Save / Update</h2>
+    <nav class="variants" aria-label="Capture variants">
+      <a href="register-user.html">
+        <strong>Register · username</strong>
+        <span>new user → Save + tree picker</span>
+      </a>
+      <a href="register-email.html">
+        <strong>Register · email</strong>
+        <span>new email → Save</span>
+      </a>
+      <a href="register-js-submit.html">
+        <strong>Register · JS navigate</strong>
+        <span>no form submit · pagehide</span>
+      </a>
+      <a href="change-password.html">
+        <strong>Change password</strong>
+        <span>seed user → Update</span>
+      </a>
+      <a href="change-password-only-new.html">
+        <strong>Reset password</strong>
+        <span>new + confirm only → Update</span>
+      </a>
+      <a href="signup-then-login-multistep.html">
+        <strong>Signup · multistep</strong>
+        <span>email then passwords → Save</span>
+      </a>
+      <a href="login-wrong-then-ok.html">
+        <strong>Login · fails once</strong>
+        <span>capture on submit anyway</span>
+      </a>
+      <a href="login-button-no-form.html">
+        <strong>Login · no form</strong>
+        <span>button + navigate</span>
+      </a>
+      <a href="password-only-reveal.html">
+        <strong>Password only</strong>
+        <span>ask username in doorhanger</span>
+      </a>
+      <a href="dismiss-never.html">
+        <strong>Dismiss / Never</strong>
+        <span>host denylist bank</span>
+      </a>
+    </nav>
+
+    <p class="hint">Seed accounts (all URL <code>http://127.0.0.1:8765</code>):</p>
+    <ul class="accounts" id="account-list"></ul>
+  </main>
+  <script src="shared.js"></script>
+  <script>
+    document.getElementById("account-list").innerHTML = ACME_ACCOUNTS.map(
+      (a) =>
+        `<li><code>${a.user}</code> / <code>${a.password}</code> <em>(${a.kind} · ${a.path})</em></li>`
+    ).join("");
+  </script>
+</body>
+</html>

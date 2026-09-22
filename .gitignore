@@ -6,6 +6,7 @@ Cargo.lock
 # --- Docker & Logs ---
 .env
 .env.dev
+.env.prod
 *.log
 docker-compose.override.yml
 
@@ -13,6 +14,7 @@ docker-compose.override.yml
 .DS_Store
 .idea/
 .vscode/
+.cortex/
 *.swp
 
 # --- Security (CRITICAL!) ---
@@ -25,6 +27,7 @@ docker-compose.override.yml
 /config/
 /data/
 /data-dev/
+/dist/
 
 # --- Database ---
 *.db

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme — One step email</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <main>
+    <a class="back" href="index.html">← All variants</a>
+    <p class="brand">ACME // NODE</p>
+    <h1>One step email</h1>
+    <p class="lede">Single form with email + password.</p>
+    <form id="login-form" autocomplete="on">
+      <label>
+        Email
+        <input id="identifier" name="email" type="email" autocomplete="email" required />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="result" aria-live="polite"></p>
+    <p class="hint">Talos should offer multiple matches for this host. Any seeded account can sign in.</p>
+  </main>
+  <script src="shared.js"></script>
+  <script>acmeWireOneStep({ idField: "identifier" });</script>
+</body>
+</html>

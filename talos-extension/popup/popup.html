@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https: http://127.0.0.1:* http://localhost:* http://[::1]:*; object-src 'none'; base-uri 'self'" />
+  <title>talos-vault</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <img src="../icons/icon32.png" alt="" width="20" height="20" />
+      <span>talos-vault</span>
+    </div>
+    <div class="actions">
+      <button type="button" id="btn-open-web" data-i18n-title="ext_open_web" data-i18n-aria="ext_open_web" title="Open vault" aria-label="Open vault">⌂</button>
+      <button type="button" id="btn-options" data-i18n-title="ext_popup_settings" data-i18n-aria="ext_popup_settings" title="Settings" aria-label="Settings">⚙</button>
+      <button type="button" id="btn-lock" data-i18n-title="ext_popup_lock" data-i18n-aria="ext_popup_lock" title="Lock" aria-label="Lock" hidden>🔒</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button type="button" id="tab-site" class="tab active" role="tab" aria-selected="true" data-i18n="ext_tab_site">Site</button>
+    <button type="button" id="tab-vault" class="tab" role="tab" aria-selected="false" data-i18n="ext_tab_vault">Vault</button>
+  </nav>
+
+  <main>
+    <section id="view-site" class="panel">
+      <p class="host" id="current-host">—</p>
+      <p id="match-status" class="muted"></p>
+
+      <ul id="match-list" class="list"></ul>
+      <p id="match-empty" class="muted" hidden data-i18n="ext_no_matches">No matching credentials for this site.</p>
+      <p id="match-error" class="error" hidden></p>
+    </section>
+
+    <section id="view-vault" class="panel" hidden>
+      <label class="field" id="vault-search-wrap" hidden>
+        <span data-i18n="ext_tree_search">Search vault</span>
+        <input type="text" id="tree-search" autocomplete="off" data-i18n-placeholder="ext_tree_search_ph" placeholder="FILTER…" />
+      </label>
+      <div id="vault-tree" class="vault-tree" hidden></div>
+      <p id="vault-empty" class="muted" hidden data-i18n="ext_tree_empty">Vault is empty.</p>
+      <p id="vault-locked" class="muted" hidden data-i18n="ext_tree_locked">Unlock to browse the vault tree.</p>
+      <p id="vault-error" class="error" hidden></p>
+    </section>
+
+    <section id="view-secret" class="panel" hidden>
+      <p class="secret-path" id="secret-path"></p>
+      <label class="field">
+        <span data-i18n="ext_field_user">Username</span>
+        <div class="row-input">
+          <input type="text" id="secret-user" autocomplete="off" />
+          <button type="button" class="ghost-icon" id="btn-copy-user" data-i18n-title="ext_copy_user" title="Copy user">⧉</button>
+        </div>
+      </label>
+      <label class="field">
+        <span data-i18n="ext_field_password">Password</span>
+        <div class="row-input">
+          <input type="password" id="secret-pass" autocomplete="off" />
+          <button type="button" class="ghost-icon" id="btn-toggle-pass" data-i18n-title="ext_toggle_pass" title="Show/hide">◉</button>
+          <button type="button" class="ghost-icon" id="btn-copy-pass" data-i18n-title="ext_copy_pass" title="Copy password">⧉</button>
+        </div>
+      </label>
+      <div class="gen-box">
+        <div class="gen-row">
+          <label class="gen-len">
+            <span data-i18n="ext_gen_length">Length</span>
+            <input type="range" id="gen-length" min="12" max="64" value="24" />
+            <output id="gen-length-out">24</output>
+          </label>
+          <button type="button" class="secondary" id="btn-generate" data-i18n="ext_gen_btn">Generate</button>
+        </div>
+        <div class="gen-flags">
+          <label><input type="checkbox" id="gen-upper" checked /> A-Z</label>
+          <label><input type="checkbox" id="gen-nums" checked /> 0-9</label>
+          <label><input type="checkbox" id="gen-syms" checked /> !@#</label>
+        </div>
+      </div>
+      <label class="field">
+        <span data-i18n="ext_field_url">URL</span>
+        <input type="url" id="secret-url" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span data-i18n="ext_field_notes">Notes</span>
+        <textarea id="secret-notes" rows="3" autocomplete="off"></textarea>
+      </label>
+      <p id="secret-error" class="error" hidden></p>
+      <p id="secret-ok" class="ok" hidden></p>
+      <div class="row-actions">
+        <button type="button" class="primary" id="btn-secret-save" data-i18n="ext_secret_save">Save</button>
+        <button type="button" class="secondary" id="btn-secret-fill" data-i18n="ext_secret_fill">Fill</button>
+        <button type="button" class="ghost" id="btn-secret-back" data-i18n="ext_secret_back">Back</button>
+      </div>
+    </section>
+
+    <section id="view-unlock" class="view" hidden>
+      <p class="hint" id="unlock-hint" data-i18n="ext_unlock_hint">Enter the master key to fill credentials.</p>
+      <label class="field">
+        <span data-i18n="ext_master_key">Master key</span>
+        <input type="password" id="master-key" autocomplete="off" data-i18n-placeholder="ext_ph_master_key" placeholder="ENTER MASTER KEY" />
+      </label>
+      <button type="button" id="btn-unlock" class="primary" data-i18n="ext_unlock_fill">Unlock &amp; fill</button>
+      <p id="lock-error" class="error" hidden></p>
+    </section>
+  </main>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
