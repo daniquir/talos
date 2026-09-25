@@ -23,7 +23,7 @@ Do **not** put HashiCorp unseal keys in here until you have logged in once and t
 2. Wildcard TLS already on Apache (`kanda-cloud.crt` / `.key` / `.ca-bundle`).
 3. Keycloak NDK running on `:8483`.
 4. A DNS **A** record: host `talos` → `151.237.59.10`. Optional AdGuard rewrite → `10.20.30.40`.
-5. This git clone (or the tagged images after `v1.2.0` is pushed to **`kandacloud/talos`**).
+5. This git clone (or the tagged images after `v1.2.1` is pushed to **`kandacloud/talos`**).
 
 Port **3000 on the host** belongs to AdGuard. Production TALOS does not bind it.
 
@@ -39,7 +39,11 @@ Admin console: `https://dev.kanda.cloud:8483` (realm `master` to administer).
    - Web origin: `https://talos.kanda.cloud`
    - Standard flow on. PKCE S256 OK (the web app sends it).
    - Copy the client secret into `.env.prod` `OIDC_CLIENT_SECRET`.
-5. Client **`talos-extension`** (public): redirect loopback + `https://*.chromiumapp.org/*`. PKCE S256.
+5. Client **`talos-extension`** (public): PKCE S256. Valid redirect URIs:
+   - `http://127.0.0.1/*` / `http://localhost/*` (dev / temporary add-on)
+   - `https://*.chromiumapp.org/*` (Chrome / Edge)
+   - `https://*.extensions.allizom.org/*` (Firefox AMO — required for listed **talos-vault**)
+   - Or the exact URI from a failed login (`https://<hash>.extensions.allizom.org/`)
 6. Create **your** user (not `dev`). Roles: `talos-user` (and `talos-admin` only if you want operator unseal later). Turn on OTP if you already use Authenticator.
 
 Never use realm `master` for the vault.
@@ -77,7 +81,7 @@ docker compose -f docker-compose.prod.yaml --env-file .env.prod up --build -d
 docker compose -f docker-compose.prod.yaml ps
 ```
 
-First build on the N100 takes several minutes (Rust). After GitHub tag `v1.2.0` publishes **`kandacloud/talos:{ver}-web|storage|bunker`**, prefer:
+First build on the N100 takes several minutes (Rust). After GitHub tag `v1.2.1` publishes **`kandacloud/talos:{ver}-web|storage|bunker`**, prefer:
 
 ```bash
 docker compose -f docker-compose.prod.yaml --env-file .env.prod pull
@@ -93,13 +97,15 @@ Bunker health may look **unhealthy** until you unlock a vault. That is normal (`
 3. Set a **vault passphrase** (GPG). This is not the Keycloak password and not a YubiKey PIN.
 4. Create a test secret. Restart `talos-bunker` → UI asks the passphrase again. If that works, you can start moving real logins here.
 
-Browser extension (**talos-vault** on AMO, pending review): server URL `https://talos.kanda.cloud`, issuer `https://dev.kanda.cloud:8483/realms/talos`, client `talos-extension`. Same listing name on Chrome when submitted.
+Browser extension (**talos-vault** on AMO): server URL `https://talos.kanda.cloud`, issuer `https://dev.kanda.cloud:8483/realms/talos`, client `talos-extension`. Same listing name on Chrome when submitted.
+
+`talos-web` validates extension id_tokens with audience `talos-extension` as well as `OIDC_CLIENT_ID` (`talos-web`). Override with `OIDC_AUDIENCES=talos-web,talos-extension` if needed.
 
 ## 6. What this release deliberately skips
 
 - HashiCorp Vault for `.env.prod` (file on disk, like Outline)
 - Git backend for the password-store (local volume; add `talos-secrets` later)
-- Auto-publish to stores until `PUBLISH_FIREFOX` / `PUBLISH_CHROME` (first AMO listing **talos-vault** is manual, in review)
+- Auto-publish to stores until `PUBLISH_FIREFOX` / `PUBLISH_CHROME` (AMO **talos-vault** is listed; optional auto-submit on later tags)
 - Auto-unseal / `convenience` mode
 - Shipping `talos-keycloak` `start-dev`
 

@@ -191,7 +191,7 @@
   "ext_auto_lock_30": "30 minutos",
   "ext_auto_lock_help": "Bloquea la sesión de la extensión tras un tiempo inactivo (por defecto 15 minutos). Compatible con o sin persistencia de sesión.",
   "btn_oidc_login": "Entrar con Keycloak",
-  "login_oidc_hint": "Luego desbloquea la passphrase del vault",
+  "login_oidc_hint": "Introduce la passphrase para desbloquear el vault",
   "ext_oidc_issuer": "Issuer OIDC (realm Keycloak)",
   "ext_oidc_client": "Client id OIDC"
 }

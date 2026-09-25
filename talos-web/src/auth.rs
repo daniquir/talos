@@ -126,6 +126,18 @@ pub async fn get_auth_status(
             authenticated = entry.vault_unlocked;
         }
     } else if state.oidc.enabled {
+        // Resume vault access if OIDC session is alive and bunker still holds the key.
+        if oidc_authenticated && !vault_unlocked {
+            if bunker_already_unsealed(user_sub.as_deref()).await {
+                session.insert("vault_unlocked", true).await.ok();
+                session.insert("authenticated", true).await.ok();
+                vault_unlocked = true;
+                if auth_method.is_none() {
+                    auth_method = Some("oidc+vault".to_string());
+                    session.insert("auth_method", "oidc+vault").await.ok();
+                }
+            }
+        }
         authenticated = oidc_authenticated && vault_unlocked;
     } else {
         authenticated = session.get("authenticated").await.unwrap_or_default().unwrap_or(false);
@@ -234,6 +246,24 @@ async fn unlock_wrapped(user_sub: &str) -> Result<(), StatusCode> {
     match req.send().await {
         Ok(response) if response.status().is_success() => Ok(()),
         _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
+async fn bunker_already_unsealed(user_sub: Option<&str>) -> bool {
+    let client = reqwest::Client::new();
+    let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
+    let mut req = client.get(format!("{}/api/health", storage_url));
+    for (k, v) in user_headers(user_sub) {
+        req = req.header(k, v);
+    }
+    match req.send().await {
+        Ok(res) => res
+            .json::<Value>()
+            .await
+            .ok()
+            .and_then(|v| v["bunker"].as_str().map(|s| s == "UNSEALED"))
+            .unwrap_or(false),
+        Err(_) => false,
     }
 }
 
@@ -478,12 +508,21 @@ pub async fn oidc_callback(
             session.insert("authenticated", true).await.ok();
         }
     }
-
-    if vault_unlocked || custody_mode() == "convenience" {
-        // convenience without wrap still needs first-time passphrase unlock UI
-        if vault_unlocked {
-            return Redirect::temporary("/").into_response();
+    // If the bunker still holds this user's key in RAM (e.g. web session timed out
+    // but bunker did not restart), skip asking for the vault passphrase again.
+    if !vault_unlocked && bunker_already_unsealed(Some(&claims.sub)).await {
+        vault_unlocked = true;
+        session.insert("vault_unlocked", true).await.ok();
+        session.insert("authenticated", true).await.ok();
+        if custody_mode() == "convenience" {
+            session.insert("auth_method", "oidc").await.ok();
+        } else {
+            session.insert("auth_method", "oidc+vault").await.ok();
         }
+    }
+
+    if vault_unlocked {
+        return Redirect::temporary("/").into_response();
     }
     Redirect::temporary("/?need_vault_unlock=1").into_response()
 }

@@ -299,6 +299,25 @@ pub async fn proxy_create_category(
     proxy_request_with_user(&format!("{}/api/create_category", storage_url), Some(body), sub.as_deref()).await
 }
 
+pub async fn proxy_rename_category(
+    State(state): State<AppState>,
+    session: Session,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<Value>
+) -> impl IntoResponse {
+    let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
+    if is_debug() { println!("--> [WEB] Proxying RENAME CATEGORY"); }
+
+    let path = body["path"].as_str().unwrap_or("unknown");
+    let original = body["original_path"].as_str().unwrap_or("?");
+    let ua_header = headers.get(header::USER_AGENT);
+    log_audit(&state, &session, Some(addr.ip()), ua_header, "RENAME_CATEGORY", &format!("{} → {}", original, path)).await;
+
+    let sub = resolve_user_sub(&state, &session, &headers).await;
+    proxy_request_with_user(&format!("{}/api/rename_category", storage_url), Some(body), sub.as_deref()).await
+}
+
 pub async fn proxy_initialize(
     State(state): State<AppState>,
     session: Session, // Empty session, but needed for signature

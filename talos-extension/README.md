@@ -64,7 +64,7 @@ Build a zip (no signing — stores sign on upload or via their tooling):
 
 ```bash
 ./talos-extension/scripts/package.sh
-# → dist/talos-extension-v1.0.1.zip
+# → dist/talos-extension-v1.2.1.zip
 ```
 
 ### Chrome Web Store
@@ -75,7 +75,7 @@ Public name **talos-vault** (same as AMO). First item is **manual**; then GitHub
 3. Publish (unlisted / public)
 
 ### Firefox AMO
-Listing name **talos-vault** (slug; first upload **pending review** as of 2026-09-22). Do not create a second addon named `talos`.
+Listing name **talos-vault** (slug; **listed** on AMO as of 2026-09-25). Do not create a second addon named `talos`.
 
 1. [addons.mozilla.org/developers](https://addons.mozilla.org/developers/) → the existing **talos-vault** listing
 2. Later tags: GitHub Action `publish-firefox` with `AMO_JWT_*` secrets (updates this listing; `web-ext sign --channel listed`)
