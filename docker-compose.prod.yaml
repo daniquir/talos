@@ -15,7 +15,7 @@ name: talos
 
 services:
   talos-web:
-    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.0}-web
+    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.1}-web
     build:
       context: ./talos-web
       dockerfile: Dockerfile
@@ -68,7 +68,7 @@ services:
           memory: 256M
 
   talos-storage:
-    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.0}-storage
+    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.1}-storage
     build:
       context: ./talos-storage
       dockerfile: Dockerfile
@@ -109,7 +109,7 @@ services:
           memory: 128M
 
   talos-bunker:
-    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.0}-bunker
+    image: ${TALOS_IMAGE:-kandacloud/talos}:${TALOS_VERSION:-1.2.1}-bunker
     build:
       context: ./talos-bunker
       dockerfile: Dockerfile

@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-25
+
+Patch release after **talos-vault** landed on Firefox AMO: OIDC audience fix for the extension, production Keycloak redirect docs, vault UX, and storage reliability. Deploy **`kandacloud/talos:1.2.1-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.1`. Keycloak client **`talos-extension`** must allow Firefox AMO redirect URIs (see [docs/PRODUCTION.md](docs/PRODUCTION.md)).
+
+### Added
+- `POST /api/rename_category` — rename/move folders; URL index prefix rewrite
+- Web UI: styled confirm/prompt dialogs (replace browser `confirm`/`prompt`)
+- Web UI: rename category from tree context menu; clear-password control when editing secrets
+- Web UI: save button busy/disabled state while encrypting
+- Optional `OIDC_AUDIENCES` (defaults to `OIDC_CLIENT_ID` + `talos-extension`)
+
+### Fixed
+- Extension OIDC unlock: `InvalidAudience` — id_tokens from client `talos-extension` are accepted (`aud`), not only `talos-web`
+- Extension popup: passphrase input no longer disappears when switching Site ↔ Vault while locked
+- `__TALOS_KEEP_SECRET__` save path: read binary `.gpg` as base64 (was corrupting migrated secrets); replace leading marker only
+- Skip full URL-index rebuild on unlock when an index already exists (faster unlock on large vaults)
+- Parallel URL-index rebuild (bounded concurrency) when a rebuild is required
+- Web session: if bunker still holds the user’s key after OIDC, skip re-entering the vault passphrase
+
+### Changed
+- Production docs: Firefox AMO redirect (`*.extensions.allizom.org`) for Keycloak client `talos-extension`
+- AMO listing noted as approved; extension package version aligned to **1.2.1** with the server tag
+- Keycloak theme asset refresh (favicon/logo/CSS)
+
 ## [1.2.0] - 2026-09-22
 
 Production cut for kanda-server: Keycloak multi-user + browser extension (**talos-vault**). Official Docker image: **`kandacloud/talos`** (`{ver}-web|storage|bunker`). Lab remains `docker-compose.dev.yaml`; production is `docker-compose.prod.yaml` (no bundled `start-dev` Keycloak). See [docs/PRODUCTION.md](docs/PRODUCTION.md) and [docs/RELEASE.md](docs/RELEASE.md).

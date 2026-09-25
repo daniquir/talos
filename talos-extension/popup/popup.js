@@ -124,7 +124,13 @@ function setTab(tab) {
   viewSite.hidden = !site;
   viewVault.hidden = site;
   if (site) {
-    if (!pendingFill && !pendingEdit) hideUnlock();
+    // Locked: keep / restore passphrase form when switching tabs.
+    // Unlocked: only hide unlock if nothing pending (fill/edit).
+    if (!unlocked) {
+      showUnlock(pendingFill, pendingEdit);
+    } else if (!pendingFill && !pendingEdit) {
+      hideUnlock();
+    }
   } else {
     void loadVaultTree();
   }

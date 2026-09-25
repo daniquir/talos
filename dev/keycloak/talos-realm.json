@@ -66,7 +66,8 @@
         "http://127.0.0.1/*",
         "http://localhost/*",
         "https://*/*",
-        "https://*.chromiumapp.org/*"
+        "https://*.chromiumapp.org/*",
+        "https://*.extensions.allizom.org/*"
       ],
       "webOrigins": ["*"],
       "standardFlowEnabled": true,
