@@ -46,7 +46,18 @@ fn verify_sig(sub: &str, sig_hex: &str) -> bool {
     };
     mac.update(sub.as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
-    expected == sig_hex
+    ct_eq(&expected, sig_hex)
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Extract verified Keycloak `sub` (or None in legacy single-tenant mode).

@@ -4,7 +4,7 @@ use axum::http::{StatusCode, header, HeaderMap};
 use axum::response::IntoResponse;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::{Arc, atomic::{AtomicBool, Ordering}}};
+use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::Arc};
 use crate::models::{ActionRequest, BunkerTask};
 use crate::config::{CONFIG, DEBUG_MODE, STORE_PATH};
 use crate::user_ctx::{ensure_user_store, extract_user_sub, require_user_sub};
@@ -37,7 +37,24 @@ fn verify_signature(result: &str, signature: &str) -> bool {
     let mut mac = HmacSha256::new_from_slice(shared_secret.as_bytes()).unwrap();
     mac.update(result.as_bytes());
     let expected_signature = hex::encode(mac.finalize().into_bytes());
-    expected_signature == signature
+    ct_eq(&expected_signature, signature)
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Resolve vault identity from verified HMAC headers only.
+/// Never trust `user_sub` from JSON bodies (defense-in-depth against spoofing).
+fn vault_user_from_headers(headers: &HeaderMap) -> Result<Option<String>, StatusCode> {
+    require_user_sub(headers)
 }
 
 // Validate and sanitize path to prevent path traversal attacks
@@ -824,8 +841,10 @@ pub struct InitializeRequest {
 
 pub async fn initialize_bunker(headers: HeaderMap, Json(req): Json<InitializeRequest>) -> impl IntoResponse {
     if *DEBUG_MODE { println!("--> [STORAGE] INITIALIZE request received"); }
-    let user_from_hdr = extract_user_sub(&headers).ok().flatten();
-    let user_sub = req.user_sub.clone().or(user_from_hdr);
+    let user_sub = match vault_user_from_headers(&headers) {
+        Ok(u) => u,
+        Err(status) => return (status, Json(json!({"error": "Unauthorized"}))).into_response(),
+    };
     let user_ref = user_sub.as_deref();
     if let Some(sub) = user_ref {
         let _ = ensure_user_store(Some(sub));
@@ -841,7 +860,7 @@ pub async fn initialize_bunker(headers: HeaderMap, Json(req): Json<InitializeReq
         .send().await.unwrap().json().await.unwrap();
     
     if check_res["result"].as_str() != Some("UNINITIALIZED") {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "System already initialized"})));
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "System already initialized"}))).into_response();
     }
 
     // Send Initialize Command
@@ -854,12 +873,12 @@ pub async fn initialize_bunker(headers: HeaderMap, Json(req): Json<InitializeReq
         Ok(res) if res.status().is_success() => {
             let data: serde_json::Value = res.json().await.unwrap_or_default();
             if data["result"].as_str() == Some("INITIALIZED") {
-                (StatusCode::OK, Json(json!({"status": "initialized"})))
+                (StatusCode::OK, Json(json!({"status": "initialized"}))).into_response()
             } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Bunker initialization failed"})))
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Bunker initialization failed"}))).into_response()
             }
         },
-        _ => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Bunker unreachable or init failed"})))
+        _ => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Bunker unreachable or init failed"}))).into_response()
     }
 }
 
@@ -872,8 +891,10 @@ pub struct ImportRequest {
 }
 
 pub async fn import_bunker_key(headers: HeaderMap, Json(req): Json<ImportRequest>) -> impl IntoResponse {
-    let user_from_hdr = extract_user_sub(&headers).ok().flatten();
-    let user_sub = req.user_sub.clone().or(user_from_hdr);
+    let user_sub = match vault_user_from_headers(&headers) {
+        Ok(u) => u,
+        Err(status) => return (status, Json(json!({"error": "Unauthorized"}))).into_response(),
+    };
     let user_ref = user_sub.as_deref();
     if let Some(sub) = user_ref {
         let _ = ensure_user_store(Some(sub));
@@ -899,19 +920,30 @@ pub async fn import_bunker_key(headers: HeaderMap, Json(req): Json<ImportRequest
 
     match import_res {
         Ok(res) if res.status().is_success() => {
-            (StatusCode::OK, Json(json!({"status": "imported"})))
+            (StatusCode::OK, Json(json!({"status": "imported"}))).into_response()
         },
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Import failed"})))
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Import failed"}))).into_response()
     }
 }
 
-// Global flag to ensure the key can only be downloaded once per session/boot
-static KEY_DOWNLOADED: AtomicBool = AtomicBool::new(false);
+// Track which vaults already exported their key this process lifetime.
+static KEY_DOWNLOADED: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashSet<String>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
 
-pub async fn backup_bunker_key() -> impl IntoResponse {
-    // Check if key was already downloaded (thread-safe)
-    if KEY_DOWNLOADED.load(Ordering::SeqCst) {
-        return (StatusCode::GONE, Json(json!({"error": "Key already downloaded. Access revoked."}))).into_response();
+pub async fn backup_bunker_key(headers: HeaderMap) -> impl IntoResponse {
+    let user_sub = match vault_user_from_headers(&headers) {
+        Ok(u) => u,
+        Err(status) => return (status, Json(json!({"error": "Unauthorized"}))).into_response(),
+    };
+    let download_key = user_sub
+        .clone()
+        .unwrap_or_else(|| "__legacy__".to_string());
+
+    {
+        let downloaded = KEY_DOWNLOADED.lock().unwrap();
+        if downloaded.contains(&download_key) {
+            return (StatusCode::GONE, Json(json!({"error": "Key already downloaded. Access revoked."}))).into_response();
+        }
     }
 
     if *DEBUG_MODE { println!("--> [STORAGE] BACKUP KEY request"); }
@@ -919,10 +951,10 @@ pub async fn backup_bunker_key() -> impl IntoResponse {
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     let client = reqwest::Client::new();
 
-    // Request export from Bunker
+    // Request export from Bunker (scoped to verified user when MULTIUSER)
     let res = client.post(format!("{}/process", bunker_url))
         .header("X-Talos-Auth", &shared_secret)
-        .json(&bunker_task("export_key", String::new(), None))
+        .json(&bunker_task("export_key", String::new(), user_sub.as_deref()))
         .send().await;
 
     match res {
@@ -930,8 +962,7 @@ pub async fn backup_bunker_key() -> impl IntoResponse {
             let data: Value = response.json().await.unwrap_or_default();
             let key_content = data["result"].as_str().unwrap_or("").to_string();
 
-            // Mark as downloaded to prevent future access (thread-safe)
-            KEY_DOWNLOADED.store(true, Ordering::SeqCst);
+            KEY_DOWNLOADED.lock().unwrap().insert(download_key);
 
             (StatusCode::OK, key_content).into_response()
         },
@@ -947,8 +978,10 @@ pub struct UnlockRequest {
 }
 
 pub async fn unlock_bunker(headers: HeaderMap, Json(req): Json<UnlockRequest>) -> impl IntoResponse {
-    let user_from_hdr = extract_user_sub(&headers).ok().flatten();
-    let user_sub = req.user_sub.clone().or(user_from_hdr);
+    let user_sub = match vault_user_from_headers(&headers) {
+        Ok(u) => u,
+        Err(status) => return (status, Json(json!({"error": "Unauthorized"}))),
+    };
     let user_ref = user_sub.as_deref();
     if let Some(sub) = user_ref {
         let _ = ensure_user_store(Some(sub));

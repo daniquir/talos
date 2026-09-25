@@ -16,8 +16,8 @@ use std::{env, net::SocketAddr, collections::HashMap, sync::{Arc, Mutex}};
 use crate::handlers::{get_version, proxy_list_tree, proxy_decrypt, proxy_save, proxy_delete, proxy_backup, proxy_restore, health_check, proxy_create_category, proxy_rename_category, get_audit_logs, proxy_initialize, proxy_match, proxy_reindex};
 use crate::db::init_db;
 use crate::auth::{
-    get_auth_status, login, logout, require_auth, proxy_import_key, proxy_backup_key, issue_token,
-    issue_token_oidc, oidc_login, oidc_callback, operator_unseal,
+    get_auth_status, login, logout, require_auth, require_setup_identity, proxy_import_key,
+    proxy_backup_key, issue_token, issue_token_oidc, oidc_login, oidc_callback, operator_unseal,
 };
 use crate::settings::{ensure_settings_schema, get_settings, put_settings};
 use crate::state::AppState;
@@ -58,6 +58,7 @@ async fn main() {
         println!("🔒 [SYSTEM] SECURE MODE ACTIVE: Authentication required.");
     }
 
+    // Full vault access: OIDC + vault unlock (or legacy session / Bearer).
     let api_router = Router::new()
         .route("/api/tree", get(proxy_list_tree))
         .route("/api/match", get(proxy_match))
@@ -72,7 +73,14 @@ async fn main() {
         .route("/api/audit", get(get_audit_logs))
         .route("/api/settings", put(put_settings))
         .route("/api/auth/operator/unseal", post(operator_unseal))
+        .route("/api/auth/backup-key", get(proxy_backup_key))
         .route_layer(middleware::from_fn_with_state(app_state.clone(), require_auth));
+
+    // Vault genesis (first key / import): OIDC identity required when enabled; vault may still be locked.
+    let setup_router = Router::new()
+        .route("/api/initialize", post(proxy_initialize))
+        .route("/api/initialize/import", post(proxy_import_key))
+        .route_layer(middleware::from_fn_with_state(app_state.clone(), require_setup_identity));
 
     let app = Router::new()
         .route("/api/auth/status", get(get_auth_status))
@@ -82,12 +90,10 @@ async fn main() {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/oidc/login", get(oidc_login))
         .route("/api/auth/oidc/callback", get(oidc_callback))
-        .route("/api/initialize/import", post(proxy_import_key))
-        .route("/api/auth/backup-key", get(proxy_backup_key))
         .route("/api/version", get(get_version))
         .route("/api/health", get(health_check))
-        .route("/api/initialize", post(proxy_initialize))
         .route("/api/settings", get(get_settings))
+        .merge(setup_router)
         .merge(api_router)
         .fallback_service(ServeDir::new("./static"))
         .layer(CompressionLayer::new())

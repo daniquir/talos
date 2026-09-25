@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- `/api/auth/backup-key` now requires full vault auth (`require_auth`); anonymous GPG private-key export closed
+- `/api/initialize` and `/api/initialize/import` require OIDC identity when multi-user is on (`require_setup_identity`)
+- Storage never trusts JSON `user_sub` — only HMAC-signed `X-Talos-User-*` headers (initialize / import / unlock / backup-key)
+- `TALOS_CUSTODY_MODE=strict`: do not auto-unlock the web session just because the bunker still holds the key in RAM; passphrase required every session
+- CSRF validation fixed (`Ok(false)` was treated as success); tokens are cryptographically random
+- Rate limits honor `X-Forwarded-For` (leftmost) behind Apache
+- Constant-time compares for HMAC / shared-secret checks (web/storage/bunker)
+
 ### Fixed
 - Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
 - API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)
