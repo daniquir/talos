@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use tower_sessions::Session;
 use zip::write::FileOptions;
 use crate::state::AppState;
-use crate::auth::{validate_csrf_token, check_match_rate_limit, generate_csrf_token};
+use crate::auth::{validate_csrf_token, check_match_rate_limit, generate_csrf_token, client_ip};
 use crate::user_proxy::user_headers;
 
 fn is_debug() -> bool {
@@ -139,7 +139,7 @@ pub async fn proxy_match(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    if !check_match_rate_limit(addr.ip(), &state.match_rate_limiter) {
+    if !check_match_rate_limit(client_ip(addr, &headers), &state.match_rate_limiter) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({"error": "Too many match requests. Please wait."})),
@@ -328,7 +328,8 @@ pub async fn proxy_initialize(
     let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
     if is_debug() { println!("--> [WEB] Proxying INITIALIZE"); }
     let ua_header = headers.get(header::USER_AGENT);
-    log_audit(&state, &session, Some(addr.ip()), ua_header, "INITIALIZE", "system").await;
+    let ip = client_ip(addr, &headers);
+    log_audit(&state, &session, Some(ip), ua_header, "INITIALIZE", "system").await;
     let mut body = body;
     let sub = session_user_sub(&session).await;
     if state.oidc.enabled && sub.is_none() {
@@ -338,8 +339,12 @@ pub async fn proxy_initialize(
         )
             .into_response();
     }
-    if let (Some(obj), Some(s)) = (body.as_object_mut(), &sub) {
-        obj.insert("user_sub".into(), json!(s));
+    // Never trust client-supplied user_sub.
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("user_sub");
+        if let Some(s) = &sub {
+            obj.insert("user_sub".into(), json!(s));
+        }
     }
     let (status, Json(resp)) =
         proxy_request_with_user(&format!("{}/api/initialize", storage_url), Some(body), sub.as_deref()).await;
@@ -436,7 +441,7 @@ pub async fn proxy_restore(
     }
     
     if let Some(token) = csrf_token.as_ref() {
-        if let Err(_) = validate_csrf_token(&session, token).await {
+        if validate_csrf_token(&session, token).await.is_err() {
             return (StatusCode::UNAUTHORIZED, Json(json!({"error": "CSRF token validation failed"})));
         }
     } else {

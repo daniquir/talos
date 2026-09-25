@@ -7,6 +7,8 @@ Talos supports **per-user vaults** keyed by Keycloak `sub`. Identity and cryptog
 
 Product default: **`TALOS_CUSTODY_MODE=strict`** (both steps every session). Do not put the vault passphrase in Keycloak user attributes.
 
+In **strict** mode the web UI always asks for the vault passphrase after OIDC, even if the bunker process still holds that user’s key in RAM (e.g. after a cookie expiry). Only **convenience** may resume an already-unsealed bunker without re-entering the passphrase.
+
 Production (kanda-server, Keycloak NDK, no `start-dev`): [PRODUCTION.md](PRODUCTION.md).
 
 ## Modes

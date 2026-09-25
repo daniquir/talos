@@ -55,9 +55,23 @@ fn sign_response(result: &str) -> String {
 fn authorize(headers: &HeaderMap) -> bool {
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     match headers.get("X-Talos-Auth") {
-        Some(auth_header) => auth_header.to_str().unwrap_or("") == shared_secret,
+        Some(auth_header) => {
+            let provided = auth_header.to_str().unwrap_or("");
+            ct_eq(provided, &shared_secret)
+        }
         None => false,
     }
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 fn sub_ref(req: &CryptTask) -> Option<&str> {

@@ -13,7 +13,7 @@
 *   **Secure Storage**: GPG encryption with RSA 4096-bit keys.
 *   **True Master Key**: The Bunker is sealed at rest. The master key exists only in RAM with memory zeroization.
 *   **Rate Limiting**: In-memory rate limiter for authentication endpoints (5 attempts per 60 seconds per IP).
-*   **CSRF Protection**: Token-based CSRF protection for all state-changing operations.
+*   **CSRF Protection**: Cryptographic CSRF tokens validated on restore; session cookies use SameSite=Lax for other state-changing APIs.
 *   **Comprehensive Audit Logging**: Full audit trail across all services with timestamps and user tracking.
 *   **Integrity Verification**: SHA256 checksum verification for backup/restore operations.
 *   **Tree View Navigation**: Hierarchical organization of secrets with categories.
@@ -150,9 +150,8 @@ See [dev/README.md](dev/README.md) for reset/seed scripts and the validation che
 ### v1.1.0 Security Enhancements
 - **Mutual Authentication**: HMAC-SHA256 signature verification for inter-service communication
 - **Rate Limiting**: Brute-force protection for authentication endpoints
-- **CSRF Protection**: Token-based validation for state-changing operations
-- **Memory Security**: Zeroization of sensitive data using zeroize crate
-- **Session Security**: HttpOnly, Secure, SameSite=Strict cookies with 2-hour timeout
+- **CSRF Protection**: Cryptographic tokens on restore; SameSite=Lax session cookies for other mutations
+- **Session Security**: HttpOnly, Secure (when DEBUG=false), SameSite=Lax cookies with 2-hour inactivity timeout
 - **Request Limits**: 10MB request body size limit to prevent DoS attacks
 - **Input Validation**: Comprehensive path validation and sanitization
 - **Docker Hardening**: Non-root containers, resource limits, security profiles

@@ -28,26 +28,54 @@ const MAX_MATCH_ATTEMPTS: u32 = 60;
 const MATCH_RATE_WINDOW_SECONDS: u64 = 60;
 const CSRF_TOKEN_KEY: &str = "csrf_token";
 
+/// Constant-time string equality (length mismatch → false).
+fn ct_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 pub async fn generate_csrf_token(session: &Session) -> Result<String, StatusCode> {
     if let Some(token) = session.get::<String>(CSRF_TOKEN_KEY).await.unwrap_or(None) {
         return Ok(token);
     }
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let token = format!("csrf_{:x}", timestamp);
-    session.insert(CSRF_TOKEN_KEY, &token).await
+    let token = format!("csrf_{}", random_string(32));
+    session
+        .insert(CSRF_TOKEN_KEY, &token)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(token)
 }
 
-pub async fn validate_csrf_token(session: &Session, token: &str) -> Result<bool, StatusCode> {
-    let stored_token = session.get::<String>(CSRF_TOKEN_KEY).await
+/// Returns `Ok(())` only when the session CSRF matches `token`.
+pub async fn validate_csrf_token(session: &Session, token: &str) -> Result<(), StatusCode> {
+    let stored_token = session
+        .get::<String>(CSRF_TOKEN_KEY)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
-    Ok(stored_token == token)
+    if !ct_eq(&stored_token, token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(())
+}
+
+/// Client IP for rate limits. Prefer `X-Forwarded-For` (leftmost) when present
+/// (Apache → talos-web); otherwise the TCP peer from ConnectInfo.
+pub fn client_ip(addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first) = xff.split(',').next() {
+            if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    addr.ip()
 }
 
 #[derive(Deserialize, Zeroize)]
@@ -126,16 +154,19 @@ pub async fn get_auth_status(
             authenticated = entry.vault_unlocked;
         }
     } else if state.oidc.enabled {
-        // Resume vault access if OIDC session is alive and bunker still holds the key.
-        if oidc_authenticated && !vault_unlocked {
-            if bunker_already_unsealed(user_sub.as_deref()).await {
-                session.insert("vault_unlocked", true).await.ok();
-                session.insert("authenticated", true).await.ok();
-                vault_unlocked = true;
-                if auth_method.is_none() {
-                    auth_method = Some("oidc+vault".to_string());
-                    session.insert("auth_method", "oidc+vault").await.ok();
-                }
+        // strict: passphrase is required every web session — do not infer unlock from bunker RAM.
+        // convenience: may resume if bunker still holds the unwrapped key.
+        if custody_mode() == "convenience"
+            && oidc_authenticated
+            && !vault_unlocked
+            && bunker_already_unsealed(user_sub.as_deref()).await
+        {
+            session.insert("vault_unlocked", true).await.ok();
+            session.insert("authenticated", true).await.ok();
+            vault_unlocked = true;
+            if auth_method.is_none() {
+                auth_method = Some("oidc+vault".to_string());
+                session.insert("auth_method", "oidc+vault").await.ok();
             }
         }
         authenticated = oidc_authenticated && vault_unlocked;
@@ -275,8 +306,9 @@ pub async fn login(
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    if !check_rate_limit(addr.ip(), &state.rate_limiter) {
-        log_audit(&state, &session, Some(addr.ip()), headers.get(header::USER_AGENT), "LOGIN_RATE_LIMITED", "system").await;
+    let ip = client_ip(addr, &headers);
+    if !check_rate_limit(ip, &state.rate_limiter) {
+        log_audit(&state, &session, Some(ip), headers.get(header::USER_AGENT), "LOGIN_RATE_LIMITED", "system").await;
         return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "Too many login attempts. Please wait 60 seconds."})));
     }
 
@@ -300,14 +332,14 @@ pub async fn login(
                 session.insert("auth_method", "oidc+vault").await.unwrap();
             }
             let csrf_token = generate_csrf_token(&session).await.unwrap_or_default();
-            log_audit(&state, &session, Some(addr.ip()), ua_header, "LOGIN_SUCCESS", user_sub.as_deref().unwrap_or("system")).await;
+            log_audit(&state, &session, Some(ip), ua_header, "LOGIN_SUCCESS", user_sub.as_deref().unwrap_or("system")).await;
             (StatusCode::OK, Json(json!({
                 "status": "Logged in",
                 "csrf_token": csrf_token
             })))
         }
         Err(_) => {
-            log_audit(&state, &session, Some(addr.ip()), ua_header, "LOGIN_FAILURE", "system").await;
+            log_audit(&state, &session, Some(ip), ua_header, "LOGIN_FAILURE", "system").await;
             (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid Master Key"})))
         }
     }
@@ -320,8 +352,9 @@ pub async fn issue_token(
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
-    if !check_rate_limit(addr.ip(), &state.rate_limiter) {
-        log_audit(&state, &session, Some(addr.ip()), headers.get(header::USER_AGENT), "TOKEN_RATE_LIMITED", "system").await;
+    let ip = client_ip(addr, &headers);
+    if !check_rate_limit(ip, &state.rate_limiter) {
+        log_audit(&state, &session, Some(ip), headers.get(header::USER_AGENT), "TOKEN_RATE_LIMITED", "system").await;
         return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "Too many login attempts. Please wait 60 seconds."})));
     }
 
@@ -330,8 +363,7 @@ pub async fn issue_token(
 
     if state.oidc.enabled {
         let oidc_ok: bool = session.get("oidc_authenticated").await.unwrap_or_default().unwrap_or(false);
-        if !oidc_ok && user_sub.is_none() {
-            // Extension may send OIDC access token later; for now require prior oidc session or body
+        if !oidc_ok {
             return (StatusCode::UNAUTHORIZED, Json(json!({"error": "OIDC required"})));
         }
     }
@@ -339,7 +371,7 @@ pub async fn issue_token(
     match unlock_with_key(&payload.key, user_sub.as_deref()).await {
         Ok(()) => {
             let access_token = state.issue_token(user_sub.clone(), true);
-            log_audit(&state, &session, Some(addr.ip()), ua_header, "TOKEN_ISSUED", user_sub.as_deref().unwrap_or("extension")).await;
+            log_audit(&state, &session, Some(ip), ua_header, "TOKEN_ISSUED", user_sub.as_deref().unwrap_or("extension")).await;
             (StatusCode::OK, Json(json!({
                 "access_token": access_token,
                 "token_type": "Bearer",
@@ -347,7 +379,7 @@ pub async fn issue_token(
             })))
         }
         Err(_) => {
-            log_audit(&state, &session, Some(addr.ip()), ua_header, "TOKEN_FAILURE", "extension").await;
+            log_audit(&state, &session, Some(ip), ua_header, "TOKEN_FAILURE", "extension").await;
             (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid Master Key"})))
         }
     }
@@ -506,20 +538,15 @@ pub async fn oidc_callback(
             vault_unlocked = true;
             session.insert("vault_unlocked", true).await.ok();
             session.insert("authenticated", true).await.ok();
-        }
-    }
-    // If the bunker still holds this user's key in RAM (e.g. web session timed out
-    // but bunker did not restart), skip asking for the vault passphrase again.
-    if !vault_unlocked && bunker_already_unsealed(Some(&claims.sub)).await {
-        vault_unlocked = true;
-        session.insert("vault_unlocked", true).await.ok();
-        session.insert("authenticated", true).await.ok();
-        if custody_mode() == "convenience" {
+        } else if bunker_already_unsealed(Some(&claims.sub)).await {
+            // Convenience only: resume if bunker still holds unwrapped key.
+            vault_unlocked = true;
+            session.insert("vault_unlocked", true).await.ok();
+            session.insert("authenticated", true).await.ok();
             session.insert("auth_method", "oidc").await.ok();
-        } else {
-            session.insert("auth_method", "oidc+vault").await.ok();
         }
     }
+    // strict: never mark vault unlocked without an explicit passphrase this session.
 
     if vault_unlocked {
         return Redirect::temporary("/").into_response();
@@ -598,26 +625,86 @@ pub async fn require_auth(
     }
 }
 
+/// Vault setup (initialize / import): OIDC identity required when enabled; vault may still be locked.
+/// Legacy single-tenant (OIDC off): open bootstrap — first caller wins if uninitialized.
+pub async fn require_setup_identity(
+    State(state): State<AppState>,
+    session: Session,
+    request: Request,
+    next: Next,
+) -> Response {
+    let unauthorized = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Sign in with Keycloak before initializing your vault"})),
+        )
+            .into_response()
+    };
+
+    if let Some(token) = bearer_token(request.headers()) {
+        // Bearer already implies prior OIDC+unlock (or legacy unlock).
+        if state.token_entry(token).is_some() {
+            return next.run(request).await;
+        }
+        return unauthorized();
+    }
+
+    if state.oidc.enabled {
+        let oidc_ok: bool = session
+            .get("oidc_authenticated")
+            .await
+            .unwrap_or_default()
+            .unwrap_or(false);
+        if oidc_ok {
+            return next.run(request).await;
+        }
+        return unauthorized();
+    }
+
+    next.run(request).await
+}
+
 pub async fn proxy_import_key(
     State(state): State<AppState>,
     session: Session,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(body): Json<Value>
+    Json(body): Json<Value>,
 ) -> impl IntoResponse {
     let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
     let client = reqwest::Client::new();
+    let ip = client_ip(addr, &headers);
     let ua_header = headers.get(header::USER_AGENT);
-    log_audit(&state, &session, Some(addr.ip()), ua_header, "IMPORT_SYSTEM", "system").await;
 
     let user_sub: Option<String> = session.get("user_sub").await.unwrap_or(None);
+    if state.oidc.enabled && user_sub.is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Sign in with Keycloak before importing a vault key"})),
+        );
+    }
+
+    log_audit(
+        &state,
+        &session,
+        Some(ip),
+        ua_header,
+        "IMPORT_SYSTEM",
+        user_sub.as_deref().unwrap_or("system"),
+    )
+    .await;
+
+    // Never trust client-supplied user_sub — identity comes only from the session.
     let mut body = body;
     if let Some(obj) = body.as_object_mut() {
+        obj.remove("user_sub");
         if let Some(sub) = &user_sub {
             obj.insert("user_sub".into(), json!(sub));
         }
     }
-    let mut req = client.post(format!("{}/api/initialize/import", storage_url)).json(&body);
+    let mut req = client
+        .post(format!("{}/api/initialize/import", storage_url))
+        .json(&body);
     for (k, v) in user_headers(user_sub.as_deref()) {
         req = req.header(k, v);
     }
@@ -626,11 +713,25 @@ pub async fn proxy_import_key(
     match res {
         Ok(response) => {
             let status = response.status();
-            let status_code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-            let body = response.json::<Value>().await.unwrap_or_default();
-            (status_code, Json(body))
+            let status_code =
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            let resp_body = response.json::<Value>().await.unwrap_or_default();
+            if status.is_success() {
+                session.insert("vault_unlocked", true).await.ok();
+                session.insert("authenticated", true).await.ok();
+                if state.oidc.enabled {
+                    session.insert("auth_method", "oidc+vault").await.ok();
+                } else {
+                    session.insert("auth_method", "password").await.ok();
+                }
+                let _ = generate_csrf_token(&session).await;
+            }
+            (status_code, Json(resp_body))
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, Json(json!({"error": "Storage unreachable"})))
+        Err(_) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "Storage unreachable"})),
+        ),
     }
 }
 
@@ -641,10 +742,25 @@ pub async fn proxy_backup_key(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     let storage_url = env::var("STORAGE_URL").unwrap_or_else(|_| "http://talos-storage:4000".to_string());
+    let ip = client_ip(addr, &headers);
     let ua_header = headers.get(header::USER_AGENT);
-    log_audit(&state, &session, Some(addr.ip()), ua_header, "BACKUP_KEY", "system").await;
 
-    let user_sub: Option<String> = session.get("user_sub").await.unwrap_or(None);
+    let user_sub = if let Some(token) = bearer_token(&headers) {
+        state.token_entry(token).and_then(|e| e.user_sub)
+    } else {
+        session.get("user_sub").await.unwrap_or(None)
+    };
+
+    log_audit(
+        &state,
+        &session,
+        Some(ip),
+        ua_header,
+        "BACKUP_KEY",
+        user_sub.as_deref().unwrap_or("system"),
+    )
+    .await;
+
     let client = reqwest::Client::new();
     let mut req = client.get(format!("{}/api/backup/key", storage_url));
     for (k, v) in user_headers(user_sub.as_deref()) {
@@ -652,16 +768,34 @@ pub async fn proxy_backup_key(
     }
     match req.send().await {
         Ok(res) => {
+            let status = res.status();
             let bytes = res.bytes().await.unwrap_or_default();
+            if !status.is_success() {
+                let status_code =
+                    StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                return (
+                    status_code,
+                    Json(json!({"error": "Failed to retrieve key"})),
+                )
+                    .into_response();
+            }
             (
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, "application/pgp-keys"),
-                    (header::CONTENT_DISPOSITION, "attachment; filename=\"talos_master_private.key\"")
+                    (
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"talos_master_private.key\"",
+                    ),
                 ],
-                axum::body::Bytes::from(bytes)
-            ).into_response()
+                axum::body::Bytes::from(bytes),
+            )
+                .into_response()
         }
-        Err(_) => (StatusCode::BAD_GATEWAY, Json(json!({"error": "Failed to retrieve key"}))).into_response()
+        Err(_) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "Failed to retrieve key"})),
+        )
+            .into_response(),
     }
 }
