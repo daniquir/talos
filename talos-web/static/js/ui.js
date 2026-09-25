@@ -421,83 +421,108 @@ export const UI = {
         viewer.appendChild(titleEl);
         viewer.appendChild(descEl);
 
-        // 3. Create and append field rows
+        // 3. Field rows — actions stay next to the value (not at the far right edge).
         const fieldsContainer = document.createElement('div');
-        fieldsContainer.className = 'space-y-6';
+        fieldsContainer.className = 'space-y-5 max-w-2xl';
+
+        const makeActionBtn = (icon, title, onClick) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.title = title || '';
+            btn.className = 'shrink-0 p-1.5 rounded-sm border border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:text-green-400 hover:border-green-900/50 transition-colors';
+            btn.innerHTML = `<i data-lucide="${icon}" class="w-3.5 h-3.5"></i>`;
+            btn.onclick = onClick;
+            return btn;
+        };
+
+        const flashOk = (btn, icon) => {
+            btn.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-green-500"></i>';
+            lucide.createIcons();
+            setTimeout(() => {
+                btn.innerHTML = `<i data-lucide="${icon}" class="w-3.5 h-3.5"></i>`;
+                lucide.createIcons();
+            }, 1600);
+        };
 
         const createMetadataRow = (label, value) => {
             if (!value) return null;
 
             const row = document.createElement('div');
-            row.className = 'group flex items-center gap-4';
-            
+            row.className = 'flex items-start gap-4';
+
             const labelEl = document.createElement('span');
-            labelEl.className = 'w-20 text-zinc-500 text-xs uppercase tracking-widest';
+            labelEl.className = 'w-20 shrink-0 pt-1.5 text-zinc-500 text-xs uppercase tracking-widest';
             labelEl.innerText = label;
 
+            const body = document.createElement('div');
+            body.className = 'flex items-start gap-2 min-w-0';
+
             const valueEl = document.createElement('span');
-            valueEl.className = 'flex-1 text-zinc-300 break-all';
+            valueEl.className = 'text-zinc-300 break-all leading-relaxed';
             valueEl.innerText = value;
 
-            const copyBtn = document.createElement('button');
-            copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4"></i>';
-            copyBtn.className = 'text-zinc-600 hover:text-white transition-all opacity-0 group-hover:opacity-100';
-            copyBtn.onclick = () => {
+            const copyBtn = makeActionBtn('copy', t('copy_all'), () => {
                 navigator.clipboard.writeText(value);
-                copyBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4 text-green-500"></i>';
-                setTimeout(() => { copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4"></i>'; lucide.createIcons(); }, 2000);
-                lucide.createIcons();
-            };
+                flashOk(copyBtn, 'copy');
+            });
 
+            body.appendChild(valueEl);
+            body.appendChild(copyBtn);
             row.appendChild(labelEl);
-            row.appendChild(valueEl);
-            row.appendChild(copyBtn);
+            row.appendChild(body);
             return row;
         };
 
         const passwordRow = document.createElement('div');
-        passwordRow.className = 'group flex items-start gap-4';
+        passwordRow.className = 'flex items-start gap-4';
+
         const passLabel = document.createElement('span');
-        passLabel.className = 'w-20 text-zinc-500 text-xs uppercase tracking-widest pt-1';
+        passLabel.className = 'w-20 shrink-0 pt-1.5 text-zinc-500 text-xs uppercase tracking-widest';
         passLabel.innerText = t('password');
+
+        const passBody = document.createElement('div');
+        passBody.className = 'flex items-start gap-2 min-w-0 flex-1';
+
         const passValue = document.createElement('div');
-        passValue.className = 'flex-1 text-zinc-300 font-bold space-y-2';
-        passValue.innerText = '••••••••••••'; // Fixed length mask
+        passValue.className = 'text-zinc-300 font-bold leading-relaxed min-w-0';
+        passValue.innerText = '••••••••••••';
+
         const passButtons = document.createElement('div');
-        passButtons.className = 'flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity pt-1';
-        
+        passButtons.className = 'flex items-center gap-1 shrink-0';
+
         const fetchSecret = async () => {
-            const fullData = await API.decrypt(path, true); // reveal=true
+            const fullData = await API.decrypt(path, true);
             return fullData.split('\n')[0];
+        };
+
+        const maskPassword = () => {
+            passValue.className = 'text-zinc-300 font-bold leading-relaxed min-w-0';
+            passValue.innerText = '••••••••••••';
         };
 
         const renderRevealed = (secret) => {
             const values = this.splitSecretValues(secret);
             passValue.innerHTML = '';
             if (values.length <= 1) {
-                passValue.className = 'flex-1 text-zinc-300 font-bold break-all whitespace-pre-wrap';
+                passValue.className = 'text-zinc-300 font-bold break-all whitespace-pre-wrap leading-relaxed min-w-0';
                 passValue.innerText = secret || '';
                 return;
             }
-            passValue.className = 'flex-1 text-zinc-300 font-bold space-y-2';
+            passValue.className = 'text-zinc-300 font-bold space-y-2 min-w-0';
             values.forEach((val, i) => {
                 const item = document.createElement('div');
-                item.className = 'group/item flex items-center gap-3';
+                item.className = 'flex items-start gap-2';
                 const idx = document.createElement('span');
-                idx.className = 'text-zinc-600 text-[0.625rem] w-4';
+                idx.className = 'text-zinc-600 text-[0.625rem] w-4 shrink-0 pt-1';
                 idx.innerText = String(i + 1);
                 const text = document.createElement('span');
-                text.className = 'flex-1 break-all font-mono text-sm';
+                text.className = 'break-all font-mono text-sm';
                 text.innerText = val;
-                const copyOne = document.createElement('button');
-                copyOne.innerHTML = '<i data-lucide="copy" class="w-3.5 h-3.5 text-zinc-500 hover:text-white"></i>';
-                copyOne.onclick = async (e) => {
+                const copyOne = makeActionBtn('copy', t('copy_all'), async (e) => {
                     e.stopPropagation();
                     await navigator.clipboard.writeText(val);
-                    copyOne.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-green-500"></i>';
-                    setTimeout(() => { copyOne.innerHTML = '<i data-lucide="copy" class="w-3.5 h-3.5 text-zinc-500 hover:text-white"></i>'; lucide.createIcons(); }, 2000);
-                    lucide.createIcons();
-                };
+                    flashOk(copyOne, 'copy');
+                });
                 item.appendChild(idx);
                 item.appendChild(text);
                 item.appendChild(copyOne);
@@ -506,35 +531,34 @@ export const UI = {
             lucide.createIcons();
         };
 
-        const showBtn = document.createElement('button');
-        showBtn.innerHTML = '<i data-lucide="eye" class="w-4 h-4 text-zinc-400 hover:text-white"></i>';
-        showBtn.onmousedown = async () => { 
+        const showBtn = makeActionBtn('eye', t('password'), null);
+        showBtn.onmousedown = async (e) => {
+            e.preventDefault();
             const secret = await fetchSecret();
             renderRevealed(secret);
         };
-        showBtn.onmouseup = () => {
-            passValue.className = 'flex-1 text-zinc-300 font-bold';
-            passValue.innerText = '••••••••••••';
-        };
-        showBtn.onmouseleave = () => {
-            passValue.className = 'flex-1 text-zinc-300 font-bold';
-            passValue.innerText = '••••••••••••';
-        };
-        const copyBtn = document.createElement('button');
-        copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4 text-zinc-400 hover:text-white"></i>';
-        copyBtn.title = t('copy_all');
-        copyBtn.onclick = async () => {
+        showBtn.onmouseup = maskPassword;
+        showBtn.onmouseleave = maskPassword;
+        // Touch / keyboard: brief reveal
+        showBtn.ontouchstart = async (e) => {
+            e.preventDefault();
             const secret = await fetchSecret();
-            navigator.clipboard.writeText(secret);
-            copyBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4 text-green-500"></i>';
-            setTimeout(() => { copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4 text-zinc-400 hover:text-white"></i>'; lucide.createIcons(); }, 2000);
-            lucide.createIcons();
+            renderRevealed(secret);
         };
+        showBtn.ontouchend = maskPassword;
+
+        const copyBtn = makeActionBtn('copy', t('copy_all'), async () => {
+            const secret = await fetchSecret();
+            await navigator.clipboard.writeText(secret);
+            flashOk(copyBtn, 'copy');
+        });
+
         passButtons.appendChild(showBtn);
         passButtons.appendChild(copyBtn);
+        passBody.appendChild(passValue);
+        passBody.appendChild(passButtons);
         passwordRow.appendChild(passLabel);
-        passwordRow.appendChild(passValue);
-        passwordRow.appendChild(passButtons);
+        passwordRow.appendChild(passBody);
 
         if (url) fieldsContainer.appendChild(createMetadataRow(t('url'), url));
         if (user) fieldsContainer.appendChild(createMetadataRow(t('user'), user));
