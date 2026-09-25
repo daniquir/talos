@@ -4,7 +4,7 @@ use axum::http::{StatusCode, header, HeaderMap};
 use axum::response::IntoResponse;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::atomic::{AtomicBool, Ordering}};
+use std::{env, fs, io::{self, Cursor, Write}, path::Path as StdPath, sync::{Arc, atomic::{AtomicBool, Ordering}}};
 use crate::models::{ActionRequest, BunkerTask};
 use crate::config::{CONFIG, DEBUG_MODE, STORE_PATH};
 use crate::user_ctx::{ensure_user_store, extract_user_sub, require_user_sub};
@@ -328,10 +328,25 @@ pub async fn rebuild_url_index(headers: HeaderMap) -> Result<(StatusCode, Json<V
     let secrets = flatten_secret_paths(&nodes);
     let mut entries = Vec::new();
 
+    // Parallel decrypt with bounded concurrency (serial GPG over hundreds of secrets is very slow).
+    let concurrency = 8usize;
+    let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut set = tokio::task::JoinSet::new();
+
     for (path, title) in secrets {
-        let Some(content) = decrypt_metadata(&root, &path, user.as_deref()).await else {
-            continue;
-        };
+        let root = root.clone();
+        let user = user.clone();
+        let sem = sem.clone();
+        set.spawn(async move {
+            let _permit = sem.acquire().await.ok();
+            let content = decrypt_metadata(&root, &path, user.as_deref()).await;
+            (path, title, content)
+        });
+    }
+
+    while let Some(joined) = set.join_next().await {
+        let Ok((path, title, content)) = joined else { continue };
+        let Some(content) = content else { continue };
         let (username, url) = parse_pass_metadata(&content);
         entries.push(crate::url_index::IndexEntry {
             path,
@@ -344,6 +359,19 @@ pub async fn rebuild_url_index(headers: HeaderMap) -> Result<(StatusCode, Json<V
     let count = entries.len();
     crate::url_index::replace_all_in(&root, entries);
     Ok((StatusCode::OK, Json(json!({ "status": "ok", "entries": count }))))
+}
+
+/// On unlock, rebuild only when the plaintext index is missing/empty.
+async fn refresh_url_index_after_unlock(headers: HeaderMap) {
+    let Ok(user) = require_user_sub(&headers) else { return };
+    let Ok(root) = ensure_user_store(user.as_deref()) else { return };
+    if !crate::url_index::all_entries_in(&root).is_empty() {
+        if *DEBUG_MODE {
+            println!("--> [STORAGE] URL index already present — skip rebuild on unlock");
+        }
+        return;
+    }
+    let _ = rebuild_url_index(headers).await;
 }
 
 pub async fn decrypt_secret(
@@ -412,34 +440,57 @@ pub async fn encrypt_and_save(headers: HeaderMap, Json(req): Json<ActionRequest>
     let client = reqwest::Client::new();
     
     if payload.starts_with("__TALOS_KEEP_SECRET__") {
-        let file_path = format!("{}/{}.gpg", root, req.path);
-        let encrypted_content = fs::read_to_string(&file_path).unwrap_or_default();
-        
+        // Read the existing file the same way as decrypt_secret (binary → base64).
+        // Using read_to_string corrupts binary .gpg payloads (e.g. migrated secrets)
+        // and can leave the KEEP marker or garbage as the password.
+        let keep_path = req.original_path.as_deref().unwrap_or(&req.path);
+        let file_path = format!("{}/{}.gpg", root, keep_path);
+        let encrypted_bytes = match fs::read(&file_path) {
+            Ok(b) if !b.is_empty() => b,
+            _ => {
+                log_audit_event("storage_save", "failed", "keep-secret: could not read existing file");
+                return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not preserve existing password"}))));
+            }
+        };
+        let encrypted_content = general_purpose::STANDARD.encode(&encrypted_bytes);
+
         let decrypt_res = client.post(format!("{}/process", bunker_url))
             .header("X-Talos-Auth", &shared_secret)
             .json(&bunker_task("decrypt", encrypted_content, user.as_deref()))
             .send().await;
-            
-        if let Ok(res) = decrypt_res {
-            if res.status().is_success() {
+
+        let full_text = match decrypt_res {
+            Ok(res) if res.status().is_success() => {
                 let data: serde_json::Value = match res.json().await {
                     Ok(d) => d,
-                    Err(_) => json!({"result": ""}),
+                    Err(_) => {
+                        log_audit_event("storage_save", "failed", "keep-secret: invalid decrypt response");
+                        return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not preserve existing password"}))));
+                    }
                 };
-                let full_text = data["result"].as_str().unwrap_or("").to_string();
-                
-                // Verify signature if present
+                let text = data["result"].as_str().unwrap_or("").to_string();
+                if text.is_empty() || text.starts_with("ERROR") {
+                    log_audit_event("storage_save", "failed", &format!("keep-secret: decrypt failed ({})", text));
+                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not preserve existing password"}))));
+                }
                 if let Some(signature) = data["signature"].as_str() {
-                    if !verify_signature(&full_text, signature) {
+                    if !verify_signature(&text, signature) {
                         log_audit_event("storage_save", "failed", "signature verification failed during decrypt");
                         return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Signature verification failed"}))));
                     }
                 }
-                let old_pass = full_text.split('\n').next().unwrap_or("");
-                
-                // Replace marker with the old password
-                payload = payload.replace("__TALOS_KEEP_SECRET__", old_pass);
+                text
             }
+            _ => {
+                log_audit_event("storage_save", "failed", "keep-secret: bunker decrypt unavailable");
+                return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not preserve existing password"}))));
+            }
+        };
+
+        let old_pass = full_text.split('\n').next().unwrap_or("");
+        // Replace only the leading marker (password may contain the marker string by chance).
+        if let Some(rest) = payload.strip_prefix("__TALOS_KEEP_SECRET__") {
+            payload = format!("{}{}", old_pass, rest);
         }
     }
 
@@ -585,6 +636,61 @@ pub async fn create_category(headers: HeaderMap, Json(req): Json<ActionRequest>)
 
     let _ = fs::write(format!("{}/.gitkeep", dir_path), "");
     commit_changes(&root, &format!("Add category: {}", req.path));
+    Ok((StatusCode::OK, Json(json!({"status": "OK"}))))
+}
+
+/// Rename/move a category directory. `original_path` is the current folder, `path` is the new one.
+pub async fn rename_category(headers: HeaderMap, Json(req): Json<ActionRequest>) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let user = require_user_sub(&headers)?;
+    let root = ensure_user_store(user.as_deref())?;
+    let Some(original_path) = req.original_path.as_deref() else {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "original_path required"}))));
+    };
+
+    if let Err(e) = validate_path(&req.path) {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
+    }
+    if let Err(e) = validate_path(original_path) {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": e}))));
+    }
+    if req.path == original_path {
+        return Ok((StatusCode::OK, Json(json!({"status": "OK"}))));
+    }
+    if req.path.is_empty() || original_path.is_empty() {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "Path required"}))));
+    }
+
+    let old_dir = format!("{}/{}", root, original_path);
+    let new_dir = format!("{}/{}", root, req.path);
+    let old_path = StdPath::new(&old_dir);
+    let new_path = StdPath::new(&new_dir);
+
+    if !old_path.is_dir() {
+        return Ok((StatusCode::NOT_FOUND, Json(json!({"error": "Category not found"}))));
+    }
+    if new_path.exists() {
+        return Ok((StatusCode::CONFLICT, Json(json!({"error": "Target category already exists"}))));
+    }
+    // Do not move a folder into one of its own descendants.
+    let into_self = format!("{}/", original_path);
+    if req.path.starts_with(&into_self) {
+        return Ok((StatusCode::BAD_REQUEST, Json(json!({"error": "Cannot move a category into itself"}))));
+    }
+
+    if let Some(parent) = new_path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            println!("❌ [STORAGE] Error creating parent for rename: {}", e);
+            return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not create parent directory"}))));
+        }
+    }
+
+    if let Err(e) = fs::rename(&old_dir, &new_dir) {
+        println!("❌ [STORAGE] Error renaming category: {}", e);
+        return Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Could not rename category"}))));
+    }
+
+    crate::url_index::rename_prefix_in(&root, original_path, &req.path);
+    commit_changes(&root, &format!("Rename category from {} to {}", original_path, req.path));
     Ok((StatusCode::OK, Json(json!({"status": "OK"}))))
 }
 
@@ -913,7 +1019,8 @@ pub async fn unlock_bunker(headers: HeaderMap, Json(req): Json<UnlockRequest>) -
 
     if decrypted.trim() == test_payload {
         // Refresh URL index while bunker is unsealed so match works without auth later.
-        let _ = rebuild_url_index(headers).await;
+        // Skip when an index already exists (rebuild of hundreds of secrets is slow).
+        refresh_url_index_after_unlock(headers).await;
         (StatusCode::OK, Json(json!({"status": "unlocked"})))
     } else {
         (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid Master Key"})))
@@ -996,7 +1103,7 @@ pub async fn unlock_wrapped(headers: HeaderMap) -> Result<impl IntoResponse, Sta
         Ok(r) if r.status().is_success() => {
             let data: Value = r.json().await.unwrap_or_default();
             if data["result"].as_str() == Some("VAULT_UNSEALED") {
-                let _ = rebuild_url_index(headers.clone()).await;
+                refresh_url_index_after_unlock(headers.clone()).await;
                 Ok((StatusCode::OK, Json(json!({"status": "unlocked"}))))
             } else {
                 Ok((StatusCode::UNAUTHORIZED, Json(json!({"error": data["result"]}))))

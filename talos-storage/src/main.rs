@@ -8,7 +8,7 @@ mod user_ctx;
 use axum::{routing::{get, post}, Router};
 use std::env;
 use tower_http::limit::RequestBodyLimitLayer;
-use crate::handlers::{list_tree, decrypt_secret, encrypt_and_save, delete_entry, storage_health_check, download_backup, restore_backup, create_category, unlock_bunker, initialize_bunker, import_bunker_key, backup_bunker_key, match_secrets, rebuild_url_index, operator_unseal, operator_status, unlock_wrapped};
+use crate::handlers::{list_tree, decrypt_secret, encrypt_and_save, delete_entry, storage_health_check, download_backup, restore_backup, create_category, rename_category, unlock_bunker, initialize_bunker, import_bunker_key, backup_bunker_key, match_secrets, rebuild_url_index, operator_unseal, operator_status, unlock_wrapped};
 use crate::init::init_storage;
 
 #[tokio::main]
@@ -44,6 +44,7 @@ async fn main() {
         .route("/api/backup", get(download_backup))
         .route("/api/restore", post(restore_backup))
         .route("/api/create_category", post(create_category))
+        .route("/api/rename_category", post(rename_category))
         .route("/api/initialize", post(initialize_bunker))
         .route("/api/initialize/import", post(import_bunker_key))
         .route("/api/backup/key", get(backup_bunker_key))

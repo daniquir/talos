@@ -112,6 +112,31 @@ pub fn rename_entry_in(store_root: &str, old_path: &str, new_path: &str) {
     }
 }
 
+/// Rename a category path and rewrite every indexed secret under that prefix.
+pub fn rename_prefix_in(store_root: &str, old_prefix: &str, new_prefix: &str) {
+    if old_prefix.is_empty() || old_prefix == new_prefix {
+        return;
+    }
+    let mut index = load_index_in(store_root);
+    let old_child = format!("{}/", old_prefix);
+    let mut changed = false;
+    for entry in index.entries.iter_mut() {
+        if entry.path == old_prefix || entry.path.starts_with(&old_child) {
+            entry.path = format!("{}{}", new_prefix, &entry.path[old_prefix.len()..]);
+            entry.title = entry
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&entry.path)
+                .to_string();
+            changed = true;
+        }
+    }
+    if changed {
+        save_index_in(store_root, &index);
+    }
+}
+
 pub fn replace_all_in(store_root: &str, entries: Vec<IndexEntry>) {
     save_index_in(store_root, &UrlIndex { entries });
 }
