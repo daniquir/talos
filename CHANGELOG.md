@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
+- API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)
+- `require_auth`: return JSON `{ error }` on 401 instead of an empty body
+
 ## [1.2.1] - 2026-09-25
 
 Patch release after **talos-vault** landed on Firefox AMO: OIDC audience fix for the extension, production Keycloak redirect docs, vault UX, and storage reliability. Deploy **`kandacloud/talos:1.2.1-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.1`. Keycloak client **`talos-extension`** must allow Firefox AMO redirect URIs (see [docs/PRODUCTION.md](docs/PRODUCTION.md)).

@@ -562,35 +562,39 @@ pub async fn require_auth(
     session: Session,
     request: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
+    let unauthorized = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Unauthorized — session expired or vault locked"})),
+        )
+            .into_response()
+    };
+
     if let Some(token) = bearer_token(request.headers()) {
         if let Some(entry) = state.token_entry(token) {
             if entry.vault_unlocked {
-                return Ok(next.run(request).await);
+                return next.run(request).await;
             }
-            return Err(StatusCode::UNAUTHORIZED);
+            return unauthorized();
         }
-        return Err(StatusCode::UNAUTHORIZED);
+        return unauthorized();
     }
 
     if state.oidc.enabled {
         let oidc_ok: bool = session.get("oidc_authenticated").await.unwrap_or_default().unwrap_or(false);
         let vault_ok: bool = session.get("vault_unlocked").await.unwrap_or_default().unwrap_or(false);
         if oidc_ok && vault_ok {
-            return Ok(next.run(request).await);
+            return next.run(request).await;
         }
-        // Convenience: allow if OIDC + we treat vault as unlocked after wrap
-        if oidc_ok && custody_mode() == "convenience" && vault_ok {
-            return Ok(next.run(request).await);
-        }
-        return Err(StatusCode::UNAUTHORIZED);
+        return unauthorized();
     }
 
     let authenticated: bool = session.get("authenticated").await.unwrap_or_default().unwrap_or(false);
     if authenticated {
-        Ok(next.run(request).await)
+        next.run(request).await
     } else {
-        Err(StatusCode::UNAUTHORIZED)
+        unauthorized()
     }
 }
 

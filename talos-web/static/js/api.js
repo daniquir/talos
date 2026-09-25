@@ -1,7 +1,24 @@
 export const API = {
+    async _errorMessage(res, fallback) {
+        const text = await res.text().catch(() => '');
+        if (!text) {
+            if (res.status === 401) return 'Session expired — unlock again';
+            if (res.status === 403) return 'Forbidden';
+            if (res.status === 502 || res.status === 503) return 'Storage/Bunker unavailable';
+            return fallback || res.statusText || `HTTP ${res.status}`;
+        }
+        try {
+            const err = JSON.parse(text);
+            if (typeof err === 'string') return err;
+            return err.error || err.message || fallback || `HTTP ${res.status}`;
+        } catch (_) {
+            return text.slice(0, 200) || fallback || `HTTP ${res.status}`;
+        }
+    },
+
     async fetchTree() {
         const res = await fetch(`/api/tree`);
-        if (!res.ok) throw new Error(res.statusText);
+        if (!res.ok) throw new Error(await this._errorMessage(res, res.statusText));
         return await res.json();
     },
 
@@ -12,8 +29,7 @@ export const API = {
             body: JSON.stringify({ path, reveal })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(typeof err === 'string' ? err : (err.error || 'Decryption failed'));
+            throw new Error(await this._errorMessage(res, 'Decryption failed'));
         }
         return await res.json();
     },
@@ -25,8 +41,7 @@ export const API = {
             body: JSON.stringify({ path, content, original_path })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Save failed');
+            throw new Error(await this._errorMessage(res, 'Save failed'));
         }
     },
 
@@ -37,8 +52,7 @@ export const API = {
             body: JSON.stringify({ path })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Delete failed');
+            throw new Error(await this._errorMessage(res, 'Delete failed'));
         }
     },
 
@@ -49,8 +63,7 @@ export const API = {
             body: JSON.stringify({ path })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Create category failed');
+            throw new Error(await this._errorMessage(res, 'Create category failed'));
         }
     },
 
@@ -61,8 +74,7 @@ export const API = {
             body: JSON.stringify({ path, original_path })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Rename category failed');
+            throw new Error(await this._errorMessage(res, 'Rename category failed'));
         }
     },
 
@@ -75,8 +87,7 @@ export const API = {
             body: formData
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Restore failed');
+            throw new Error(await this._errorMessage(res, 'Restore failed'));
         }
     },
 
@@ -101,7 +112,7 @@ export const API = {
 
     async fetchSettings() {
         const res = await fetch('/api/settings');
-        if (!res.ok) throw new Error(res.statusText);
+        if (!res.ok) throw new Error(await this._errorMessage(res, res.statusText));
         return await res.json();
     },
 
@@ -112,8 +123,7 @@ export const API = {
             body: JSON.stringify(patch || {})
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || res.statusText || 'Settings update failed');
+            throw new Error(await this._errorMessage(res, 'Settings update failed'));
         }
         return await res.json();
     },
@@ -130,8 +140,7 @@ export const API = {
             body: JSON.stringify({ key: masterKey })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Initialization failed');
+            throw new Error(await this._errorMessage(res, 'Initialization failed'));
         }
     },
 
@@ -142,8 +151,7 @@ export const API = {
             body: JSON.stringify({ key: privateKey, passphrase })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Import failed');
+            throw new Error(await this._errorMessage(res, 'Import failed'));
         }
     },
 
@@ -154,8 +162,7 @@ export const API = {
             body: JSON.stringify({ key: masterKey })
         });
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Login failed');
+            throw new Error(await this._errorMessage(res, 'Login failed'));
         }
     },
 
