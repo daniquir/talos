@@ -265,7 +265,8 @@
                 <input type="text" id="entry-user" data-i18n-placeholder="ph_user" placeholder="USER / EMAIL / ID" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
                 <div class="flex gap-2">
                     <input type="text" id="entry-secret" data-i18n-placeholder="ph_secret" placeholder="SECRET" class="flex-1 bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
-                    <button type="button" id="btn-entry-gen" class="bg-zinc-900 border border-zinc-800 px-4 text-green-500 hover:bg-green-900/20 transition-all"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+                    <button type="button" id="btn-entry-gen" class="bg-zinc-900 border border-zinc-800 px-4 text-green-500 hover:bg-green-900/20 transition-all" title="Generate"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+                    <button type="button" id="btn-clear-secret" class="hidden bg-zinc-900 border border-zinc-800 px-4 text-zinc-500 hover:text-red-400 hover:border-red-900/50 transition-all" data-i18n-title="btn_clear_secret" title="Clear password"><i data-lucide="eraser" class="w-4 h-4"></i></button>
                 </div>
                 
                 <!-- Generator Config (Entry) -->
@@ -293,7 +294,7 @@
                 <input type="text" id="entry-url" data-i18n-placeholder="ph_url" placeholder="URL / SITE" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500">
                 <textarea id="entry-desc" rows="3" data-i18n-placeholder="ph_description" placeholder="DESCRIPTION" class="w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500"></textarea>
                 <div class="flex gap-2">
-                    <button type="submit" class="flex-1 bg-green-900/20 border border-green-600 text-green-500 py-3 text-[0.625rem] font-bold uppercase hover:bg-green-600 hover:text-black transition-all" data-i18n="btn_execute">Execute</button>
+                    <button type="submit" id="btn-execute-secret" class="flex-1 bg-green-900/20 border border-green-600 text-green-500 py-3 text-[0.625rem] font-bold uppercase hover:bg-green-600 hover:text-black transition-all disabled:opacity-55 disabled:cursor-wait disabled:hover:bg-green-900/20 disabled:hover:text-green-500" data-i18n="btn_execute">Execute</button>
                     <button type="button" id="btn-cancel-secret" class="px-6 border border-zinc-800 text-zinc-500 text-[0.625rem] uppercase" data-i18n="btn_abort">Abort</button>
                 </div>
             </form>
@@ -441,6 +442,19 @@
 
     <!-- NOTIFICATION AREA -->
     <div id="notification-area" class="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- APP DIALOG (confirm / prompt) -->
+    <div id="dialog-modal" class="hidden fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[70]">
+        <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm p-6 shadow-[0_0_30px_rgba(0,0,0,0.8)]">
+            <h2 id="dialog-title" class="text-[0.625rem] font-bold uppercase mb-4 text-zinc-500 tracking-widest"></h2>
+            <p id="dialog-message" class="text-sm text-zinc-300 mb-4 whitespace-pre-wrap"></p>
+            <input type="text" id="dialog-input" class="hidden w-full bg-zinc-900 border border-zinc-800 p-3 text-xs text-white focus:outline-none focus:border-green-500 mb-4">
+            <div class="flex gap-2">
+                <button type="button" id="dialog-confirm" class="flex-1 bg-green-900/20 border border-green-600 text-green-500 py-3 text-[0.625rem] font-bold uppercase hover:bg-green-600 hover:text-black transition-all" data-i18n="btn_confirm">Confirm</button>
+                <button type="button" id="dialog-cancel" class="px-6 border border-zinc-800 text-zinc-500 text-[0.625rem] uppercase hover:text-white transition-all" data-i18n="btn_abort">Abort</button>
+            </div>
+        </div>
+    </div>
 
     <!-- APP ENTRY POINT -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>

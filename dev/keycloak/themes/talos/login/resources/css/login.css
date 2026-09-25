@@ -146,6 +146,9 @@ body.talos-body {
   color: var(--talos-muted);
   font-size: 0.65rem;
   letter-spacing: 0.16em;
+  /* letter-spacing leaves a trailing gap that gets clipped; pad the last glyph */
+  padding-inline-end: 0.16em;
+  overflow: visible;
   text-transform: uppercase;
 }
 

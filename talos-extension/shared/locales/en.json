@@ -191,7 +191,7 @@
   "ext_auto_lock_30": "30 minutes",
   "ext_auto_lock_help": "Locks the extension session after idle time (default 15 minutes). Works with or without session persist.",
   "btn_oidc_login": "Sign in with Keycloak",
-  "login_oidc_hint": "Then unlock your vault passphrase",
+  "login_oidc_hint": "Enter your passphrase to unlock the vault",
   "ext_oidc_issuer": "OIDC issuer (Keycloak realm)",
   "ext_oidc_client": "OIDC client id"
 }

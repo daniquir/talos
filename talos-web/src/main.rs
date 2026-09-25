@@ -13,7 +13,7 @@ use tower_http::services::ServeDir;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use std::{env, net::SocketAddr, collections::HashMap, sync::{Arc, Mutex}};
-use crate::handlers::{get_version, proxy_list_tree, proxy_decrypt, proxy_save, proxy_delete, proxy_backup, proxy_restore, health_check, proxy_create_category, get_audit_logs, proxy_initialize, proxy_match, proxy_reindex};
+use crate::handlers::{get_version, proxy_list_tree, proxy_decrypt, proxy_save, proxy_delete, proxy_backup, proxy_restore, health_check, proxy_create_category, proxy_rename_category, get_audit_logs, proxy_initialize, proxy_match, proxy_reindex};
 use crate::db::init_db;
 use crate::auth::{
     get_auth_status, login, logout, require_auth, proxy_import_key, proxy_backup_key, issue_token,
@@ -68,6 +68,7 @@ async fn main() {
         .route("/api/backup", get(proxy_backup))
         .route("/api/restore", post(proxy_restore))
         .route("/api/create_category", post(proxy_create_category))
+        .route("/api/rename_category", post(proxy_rename_category))
         .route("/api/audit", get(get_audit_logs))
         .route("/api/settings", put(put_settings))
         .route("/api/auth/operator/unseal", post(operator_unseal))

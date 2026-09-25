@@ -26,6 +26,8 @@ export const UI = {
             entryUrl: document.getElementById('entry-url'),
             entryDesc: document.getElementById('entry-desc'),
             btnEntryGen: document.getElementById('btn-entry-gen'),
+            btnClearSecret: document.getElementById('btn-clear-secret'),
+            btnExecuteSecret: document.getElementById('btn-execute-secret'),
             entryGenLength: document.getElementById('entry-gen-length'),
             entryGenLenVal: document.getElementById('entry-gen-len-val'),
             entryGenUpper: document.getElementById('entry-gen-upper'),
@@ -57,10 +59,38 @@ export const UI = {
             loginForm: document.getElementById('login-form'),
             loginKey: document.getElementById('login-key'),
             notificationArea: document.getElementById('notification-area'),
+            // App dialog
+            dialogModal: document.getElementById('dialog-modal'),
+            dialogTitle: document.getElementById('dialog-title'),
+            dialogMessage: document.getElementById('dialog-message'),
+            dialogInput: document.getElementById('dialog-input'),
+            dialogConfirm: document.getElementById('dialog-confirm'),
+            dialogCancel: document.getElementById('dialog-cancel'),
         };
+
+        if (this.elements.btnClearSecret) {
+            this.elements.btnClearSecret.onclick = () => this.clearSecretField();
+        }
+        if (this.elements.entrySecret) {
+            this.elements.entrySecret.addEventListener('input', () => {
+                if (this.elements.entrySecret.dataset.clearSecret === '1') {
+                    this.elements.entrySecret.dataset.clearSecret = '';
+                }
+            });
+        }
     },
 
-    openModal() { this.elements.modal.classList.remove('hidden'); },
+    openModal({ focusPath = false } = {}) {
+        this.elements.modal.classList.remove('hidden');
+        if (focusPath && this.elements.entryPath) {
+            requestAnimationFrame(() => {
+                const el = this.elements.entryPath;
+                el.focus();
+                const len = el.value.length;
+                try { el.setSelectionRange(len, len); } catch (_) { /* ignore */ }
+            });
+        }
+    },
     closeModal() { this.elements.modal.classList.add('hidden'); },
 
     openSetupModal() { this.elements.setupModal.classList.remove('hidden'); },
@@ -72,6 +102,77 @@ export const UI = {
     openLoginModal() { this.elements.loginModal.classList.remove('hidden'); },
     closeLoginModal() { this.elements.loginModal.classList.add('hidden'); },
 
+    /**
+     * Native-styled confirm. Resolves true/false.
+     */
+    confirm(message, { title = '' } = {}) {
+        return this._openDialog({ mode: 'confirm', title, message });
+    },
+
+    /**
+     * Native-styled prompt. Resolves string or null if cancelled.
+     */
+    prompt(message, { title = '', defaultValue = '', placeholder = '' } = {}) {
+        return this._openDialog({ mode: 'prompt', title, message, defaultValue, placeholder });
+    },
+
+    _openDialog({ mode, title, message, defaultValue = '', placeholder = '' }) {
+        return new Promise((resolve) => {
+            const modal = this.elements.dialogModal;
+            const input = this.elements.dialogInput;
+            const confirmBtn = this.elements.dialogConfirm;
+            const cancelBtn = this.elements.dialogCancel;
+
+            this.elements.dialogTitle.innerText = title || (mode === 'prompt' ? t('btn_confirm') : t('btn_confirm'));
+            this.elements.dialogMessage.innerText = message || '';
+
+            if (mode === 'prompt') {
+                input.classList.remove('hidden');
+                input.value = defaultValue;
+                input.placeholder = placeholder;
+            } else {
+                input.classList.add('hidden');
+                input.value = '';
+            }
+
+            modal.classList.remove('hidden');
+
+            const cleanup = (result) => {
+                modal.classList.add('hidden');
+                confirmBtn.onclick = null;
+                cancelBtn.onclick = null;
+                input.onkeydown = null;
+                document.removeEventListener('keydown', onEsc);
+                resolve(result);
+            };
+
+            const onEsc = (e) => {
+                if (e.key === 'Escape') cleanup(mode === 'prompt' ? null : false);
+            };
+            document.addEventListener('keydown', onEsc);
+
+            confirmBtn.onclick = () => {
+                if (mode === 'prompt') cleanup(input.value.trim() || null);
+                else cleanup(true);
+            };
+            cancelBtn.onclick = () => cleanup(mode === 'prompt' ? null : false);
+
+            if (mode === 'prompt') {
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        confirmBtn.click();
+                    }
+                };
+                requestAnimationFrame(() => {
+                    input.focus();
+                    input.select();
+                });
+            } else {
+                requestAnimationFrame(() => confirmBtn.focus());
+            }
+        });
+    },
     showNotification(message, type = 'info') {
         const notif = document.createElement('div');
         let colors = 'border-zinc-500 text-zinc-300 shadow-[0_0_10px_rgba(113,113,122,0.3)]';
@@ -167,6 +268,7 @@ export const UI = {
                 'search': {
                     'case_insensitive': true,
                     'show_only_matches': true,
+                    'show_only_matches_children': true,
                 }
             });
         }
@@ -183,9 +285,13 @@ export const UI = {
             this.elements.entrySecret.value = '';
             this.elements.entrySecret.placeholder = t('ph_secret_unchanged');
             this.elements.entrySecret.dataset.keepSecret = '1';
+            this.elements.entrySecret.dataset.clearSecret = '';
+            if (this.elements.btnClearSecret) this.elements.btnClearSecret.classList.remove('hidden');
         } else {
             this.elements.entrySecret.value = lines[0] || '';
             this.elements.entrySecret.dataset.keepSecret = '';
+            this.elements.entrySecret.dataset.clearSecret = '';
+            if (this.elements.btnClearSecret) this.elements.btnClearSecret.classList.add('hidden');
         }
         
         // Reset other fields
@@ -202,6 +308,18 @@ export const UI = {
             else descAccumulator.push(line);
         }
         this.elements.entryDesc.value = descAccumulator.join('\n').trim();
+        // @ts-ignore
+        lucide.createIcons();
+    },
+
+    async clearSecretField() {
+        const ok = await this.confirm(t('confirm_clear_secret'), { title: t('btn_clear_secret') });
+        if (!ok) return;
+        this.elements.entrySecret.value = '';
+        this.elements.entrySecret.dataset.keepSecret = '';
+        this.elements.entrySecret.dataset.clearSecret = '1';
+        this.elements.entrySecret.placeholder = t('ph_secret_cleared');
+        this.elements.entrySecret.focus();
     },
 
     getFormData() {
@@ -209,23 +327,13 @@ export const UI = {
         const user = this.elements.entryUser.value;
         const url = this.elements.entryUrl.value;
         const desc = this.elements.entryDesc.value;
-        
-        // If pass is empty and we are editing (original_path exists), we might need to handle "keep existing" logic
-        // But since the backend expects the full content to overwrite, 
-        // for this specific requirement "never obtain value for editing", 
-        // we effectively force the user to re-enter the password if they want to change anything, OR we need a way to tell backend "keep pass".
-        // However, standard pass/gpg overwrites the file. 
-        // To support "keep password" without revealing it to frontend, the backend would need a specific "patch" endpoint.
-        // For now, based on "never obtain value", if the user leaves it empty, we assume they want to set it to empty? 
-        // OR, we can implement a "merge" in backend. 
-        // Let's assume for high security: if you edit, you must re-enter or generate a new password if you want to change it.
-        // BUT, to keep the old password without seeing it, we need to fetch it in backend.
-        // Let's implement a special marker.
-        
+
         let content = pass;
-        if (pass === '' && this.elements.entrySecret.dataset.keepSecret === '1') {
+        if (pass === '' && this.elements.entrySecret.dataset.keepSecret === '1'
+            && this.elements.entrySecret.dataset.clearSecret !== '1') {
              content = '__TALOS_KEEP_SECRET__';
         }
+        // clearSecret: leave content as empty string (first line blank)
 
         if (user) content += `\nUser: ${user}`;
         if (url) content += `\nURL: ${url}`;
@@ -259,7 +367,25 @@ export const UI = {
         this.elements.form.reset();
         this.elements.entryOriginalPath.value = '';
         this.elements.entrySecret.dataset.keepSecret = '';
+        this.elements.entrySecret.dataset.clearSecret = '';
         this.elements.entrySecret.placeholder = t('ph_secret');
+        if (this.elements.btnClearSecret) this.elements.btnClearSecret.classList.add('hidden');
+        if (this.elements.btnExecuteSecret) {
+            this.elements.btnExecuteSecret.disabled = false;
+            this.elements.btnExecuteSecret.innerText = t('btn_execute');
+        }
+    },
+
+    /** Split a stored secret into displayable values without changing the stored form. */
+    splitSecretValues(secret) {
+        if (!secret) return [];
+        if (secret.includes('\n')) {
+            return secret.split('\n').map(s => s.trim()).filter(Boolean);
+        }
+        // Quoted CSV: "a","b","c" or 'a','b'
+        const quoted = [...secret.matchAll(/"([^"]*)"|'([^']*)'/g)].map(m => m[1] ?? m[2]);
+        if (quoted.length > 1) return quoted;
+        return [secret];
     },
 
     renderSecretView(path, text) {
@@ -310,7 +436,7 @@ export const UI = {
             labelEl.innerText = label;
 
             const valueEl = document.createElement('span');
-            valueEl.className = 'flex-1 text-zinc-300';
+            valueEl.className = 'flex-1 text-zinc-300 break-all';
             valueEl.innerText = value;
 
             const copyBtn = document.createElement('button');
@@ -319,7 +445,8 @@ export const UI = {
             copyBtn.onclick = () => {
                 navigator.clipboard.writeText(value);
                 copyBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4 text-green-500"></i>';
-                setTimeout(() => { copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4"></i>'; }, 2000);
+                setTimeout(() => { copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4"></i>'; lucide.createIcons(); }, 2000);
+                lucide.createIcons();
             };
 
             row.appendChild(labelEl);
@@ -329,31 +456,73 @@ export const UI = {
         };
 
         const passwordRow = document.createElement('div');
-        passwordRow.className = 'group flex items-center gap-4';
+        passwordRow.className = 'group flex items-start gap-4';
         const passLabel = document.createElement('span');
-        passLabel.className = 'w-20 text-zinc-500 text-xs uppercase tracking-widest';
+        passLabel.className = 'w-20 text-zinc-500 text-xs uppercase tracking-widest pt-1';
         passLabel.innerText = t('password');
-        const passValue = document.createElement('span');
-        passValue.className = 'flex-1 text-zinc-300 font-bold';
+        const passValue = document.createElement('div');
+        passValue.className = 'flex-1 text-zinc-300 font-bold space-y-2';
         passValue.innerText = '••••••••••••'; // Fixed length mask
         const passButtons = document.createElement('div');
-        passButtons.className = 'flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity';
+        passButtons.className = 'flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity pt-1';
         
         const fetchSecret = async () => {
             const fullData = await API.decrypt(path, true); // reveal=true
             return fullData.split('\n')[0];
         };
 
+        const renderRevealed = (secret) => {
+            const values = this.splitSecretValues(secret);
+            passValue.innerHTML = '';
+            if (values.length <= 1) {
+                passValue.className = 'flex-1 text-zinc-300 font-bold break-all whitespace-pre-wrap';
+                passValue.innerText = secret || '';
+                return;
+            }
+            passValue.className = 'flex-1 text-zinc-300 font-bold space-y-2';
+            values.forEach((val, i) => {
+                const item = document.createElement('div');
+                item.className = 'group/item flex items-center gap-3';
+                const idx = document.createElement('span');
+                idx.className = 'text-zinc-600 text-[0.625rem] w-4';
+                idx.innerText = String(i + 1);
+                const text = document.createElement('span');
+                text.className = 'flex-1 break-all font-mono text-sm';
+                text.innerText = val;
+                const copyOne = document.createElement('button');
+                copyOne.innerHTML = '<i data-lucide="copy" class="w-3.5 h-3.5 text-zinc-500 hover:text-white"></i>';
+                copyOne.onclick = async (e) => {
+                    e.stopPropagation();
+                    await navigator.clipboard.writeText(val);
+                    copyOne.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-green-500"></i>';
+                    setTimeout(() => { copyOne.innerHTML = '<i data-lucide="copy" class="w-3.5 h-3.5 text-zinc-500 hover:text-white"></i>'; lucide.createIcons(); }, 2000);
+                    lucide.createIcons();
+                };
+                item.appendChild(idx);
+                item.appendChild(text);
+                item.appendChild(copyOne);
+                passValue.appendChild(item);
+            });
+            lucide.createIcons();
+        };
+
         const showBtn = document.createElement('button');
         showBtn.innerHTML = '<i data-lucide="eye" class="w-4 h-4 text-zinc-400 hover:text-white"></i>';
         showBtn.onmousedown = async () => { 
             const secret = await fetchSecret();
-            passValue.innerText = secret; 
+            renderRevealed(secret);
         };
-        showBtn.onmouseup = () => { passValue.innerText = '••••••••••••'; };
-        showBtn.onmouseleave = () => { passValue.innerText = '••••••••••••'; };
+        showBtn.onmouseup = () => {
+            passValue.className = 'flex-1 text-zinc-300 font-bold';
+            passValue.innerText = '••••••••••••';
+        };
+        showBtn.onmouseleave = () => {
+            passValue.className = 'flex-1 text-zinc-300 font-bold';
+            passValue.innerText = '••••••••••••';
+        };
         const copyBtn = document.createElement('button');
         copyBtn.innerHTML = '<i data-lucide="copy" class="w-4 h-4 text-zinc-400 hover:text-white"></i>';
+        copyBtn.title = t('copy_all');
         copyBtn.onclick = async () => {
             const secret = await fetchSecret();
             navigator.clipboard.writeText(secret);

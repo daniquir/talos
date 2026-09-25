@@ -193,7 +193,7 @@ globalThis.TALOS_LOCALES = {
     "ext_auto_lock_30": "30 minutes",
     "ext_auto_lock_help": "Locks the extension session after idle time (default 15 minutes). Works with or without session persist.",
     "btn_oidc_login": "Sign in with Keycloak",
-    "login_oidc_hint": "Then unlock your vault passphrase",
+    "login_oidc_hint": "Enter your passphrase to unlock the vault",
     "ext_oidc_issuer": "OIDC issuer (Keycloak realm)",
     "ext_oidc_client": "OIDC client id"
   },
@@ -390,7 +390,7 @@ globalThis.TALOS_LOCALES = {
     "ext_auto_lock_30": "30 minutos",
     "ext_auto_lock_help": "Bloquea la sesi\u00f3n de la extensi\u00f3n tras un tiempo inactivo (por defecto 15 minutos). Compatible con o sin persistencia de sesi\u00f3n.",
     "btn_oidc_login": "Entrar con Keycloak",
-    "login_oidc_hint": "Luego desbloquea la passphrase del vault",
+    "login_oidc_hint": "Introduce la passphrase para desbloquear el vault",
     "ext_oidc_issuer": "Issuer OIDC (realm Keycloak)",
     "ext_oidc_client": "Client id OIDC"
   }

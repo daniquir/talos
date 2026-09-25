@@ -54,6 +54,18 @@ export const API = {
         }
     },
 
+    async renameCategory(path, original_path) {
+        const res = await fetch('/api/rename_category', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, original_path })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Rename category failed');
+        }
+    },
+
     async restore(file) {
         const formData = new FormData();
         formData.append('backup', file);

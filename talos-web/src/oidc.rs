@@ -16,6 +16,8 @@ pub struct OidcConfig {
     pub client_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
+    /// Accepted `aud` values for id_tokens (web + extension clients).
+    pub audiences: Vec<String>,
 }
 
 impl OidcConfig {
@@ -25,15 +27,34 @@ impl OidcConfig {
             "1" | "true" | "yes"
         );
         let issuer = env::var("OIDC_ISSUER").unwrap_or_default();
+        let client_id = env::var("OIDC_CLIENT_ID").unwrap_or_else(|_| "talos-web".into());
+        // Web confidential client + public extension client both mint valid id_tokens.
+        let audiences = env::var("OIDC_AUDIENCES")
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                let mut v = vec![client_id.clone()];
+                if client_id != "talos-extension" {
+                    v.push("talos-extension".into());
+                }
+                v
+            });
         Self {
             enabled: multiuser && !issuer.is_empty(),
             issuer,
             issuer_internal: env::var("OIDC_ISSUER_INTERNAL")
                 .unwrap_or_else(|_| env::var("OIDC_ISSUER").unwrap_or_default()),
-            client_id: env::var("OIDC_CLIENT_ID").unwrap_or_else(|_| "talos-web".into()),
+            client_id,
             client_secret: env::var("OIDC_CLIENT_SECRET").unwrap_or_default(),
             redirect_uri: env::var("OIDC_REDIRECT_URI")
                 .unwrap_or_else(|_| "http://localhost:3000/api/auth/oidc/callback".into()),
+            audiences,
         }
     }
 
@@ -176,7 +197,8 @@ pub async fn validate_id_token(
     let key = DecodingKey::from_rsa_components(n, e).map_err(|e| e.to_string())?;
 
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_audience(&[&cfg.client_id]);
+    let aud_refs: Vec<&str> = cfg.audiences.iter().map(|s| s.as_str()).collect();
+    validation.set_audience(&aud_refs);
     // Issuer in token is public issuer URL
     validation.set_issuer(&[cfg.issuer.trim_end_matches('/')]);
     validation.validate_exp = true;

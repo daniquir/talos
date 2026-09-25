@@ -67,6 +67,9 @@ const App = {
             const nums = UI.elements.entryGenNums.checked;
             const syms = UI.elements.entryGenSyms.checked;
             UI.elements.entrySecret.value = UI.generatePassword(len, upper, nums, syms);
+            UI.elements.entrySecret.dataset.keepSecret = '';
+            UI.elements.entrySecret.dataset.clearSecret = '';
+            UI.elements.entrySecret.placeholder = t('ph_secret');
         };
         UI.elements.entryGenLength.oninput = (e) => { UI.elements.entryGenLenVal.innerText = e.target.value; runEntryGen(); };
         UI.elements.entryGenUpper.onchange = runEntryGen;
@@ -378,15 +381,36 @@ const App = {
                 action: () => {
                     UI.clearForm();
                     UI.elements.entryPath.value = node.data.path + '/';
-                    UI.openModal();
+                    UI.openModal({ focusPath: true });
                 }
             };
             items.newCategory = {
                 label: t("ctx_new_subcategory"),
                 icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/folder-plus.svg",
-                action: () => {
-                    const name = prompt(t("prompt_subcategory"));
+                action: async () => {
+                    const name = await UI.prompt(t("prompt_subcategory"), {
+                        title: t("dialog_new_subcategory"),
+                        placeholder: t("prompt_subcategory"),
+                    });
                     if (name) this.handleNewCategory(`${node.data.path}/${name}`);
+                }
+            };
+            items.renameCategory = {
+                label: t("ctx_rename"),
+                icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/pencil.svg",
+                action: async () => {
+                    const current = node.data.path.split('/').pop();
+                    const parent = node.data.path.includes('/')
+                        ? node.data.path.slice(0, node.data.path.lastIndexOf('/'))
+                        : '';
+                    const name = await UI.prompt(t("prompt_rename_category"), {
+                        title: t("dialog_rename_category"),
+                        defaultValue: current,
+                        placeholder: t("prompt_rename_category"),
+                    });
+                    if (!name || name === current) return;
+                    const newPath = parent ? `${parent}/${name}` : name;
+                    this.handleRenameCategory(node.data.path, newPath);
                 }
             };
         } else { // It's a file
@@ -398,7 +422,7 @@ const App = {
                     UI.elements.entryPath.value = node.data.path;
                     UI.elements.entryOriginalPath.value = node.data.path;
                     UI.parseContentToForm(content);
-                    UI.openModal();
+                    UI.openModal({ focusPath: true });
                 }
             };
         }
@@ -406,10 +430,9 @@ const App = {
         items.delete = {
             label: t("ctx_delete"),
             icon: "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/trash-2.svg",
-            action: () => this.executeSafe(() => {
-                if (confirm(t("confirm_delete", { path: node.data.path }))) {
-                    this.handleDelete(node.data.path);
-                }
+            action: () => this.executeSafe(async () => {
+                const ok = await UI.confirm(t("confirm_delete", { path: node.data.path }));
+                if (ok) this.handleDelete(node.data.path);
             })
         };
         return items;
@@ -456,6 +479,16 @@ const App = {
 
     async handleSave(e) {
         e.preventDefault();
+        const btn = UI.elements.btnExecuteSecret
+            || UI.elements.form.querySelector('button[type="submit"]');
+        if (btn?.disabled) return;
+
+        const prevLabel = btn ? btn.innerText : t("btn_execute");
+        if (btn) {
+            btn.disabled = true;
+            btn.innerText = t("btn_saving");
+        }
+
         this.executeSafe(async () => {
             try {
                 const { path, content, original_path } = UI.getFormData();
@@ -469,6 +502,11 @@ const App = {
                 this.loadFiles();
             } catch (err) {
                 UI.showNotification(t("notif_save_fail", { error: err.message }), "error");
+            } finally {
+                if (btn && !UI.elements.modal.classList.contains('hidden')) {
+                    btn.disabled = false;
+                    btn.innerText = prevLabel;
+                }
             }
         });
     },
@@ -484,12 +522,24 @@ const App = {
         }
     },
 
+    async handleRenameCategory(oldPath, newPath) {
+        this.executeSafe(async () => {
+            try {
+                await API.renameCategory(newPath, oldPath);
+                this.loadFiles();
+            } catch (err) {
+                UI.showNotification(t("notif_rename_fail", { error: err.message }), "error");
+            }
+        });
+    },
+
     async handleRestore(e) {
         const file = e.target.files[0];
         if (!file) return;
         
         this.executeSafe(async () => {
-            if (confirm(t("confirm_restore"))) {
+            const ok = await UI.confirm(t("confirm_restore"));
+            if (ok) {
                 try {
                     await API.restore(file);
                     UI.showNotification(t("notif_restored"), "success");
@@ -502,21 +552,46 @@ const App = {
         });
     },
 
+    /** Folder path of the selected tree node (or parent of a selected secret). */
+    getSelectedFolderPath() {
+        const tree = UI.elements.treeContainer.jstree(true);
+        if (!tree) return '';
+        const selected = tree.get_selected(true);
+        if (!selected.length) return '';
+        const node = selected[0];
+        if (node.data?.is_dir) return node.data.path || '';
+        const path = node.data?.path || '';
+        const idx = path.lastIndexOf('/');
+        return idx > 0 ? path.slice(0, idx) : '';
+    },
+
     handleNewSecret() {
         UI.clearForm();
-        UI.openModal();
+        const folder = this.getSelectedFolderPath();
+        if (folder) UI.elements.entryPath.value = folder + '/';
+        UI.openModal({ focusPath: true });
     },
 
     async handleNewCategory(path) {
         this.executeSafe(async () => {
-            const finalPath = path || prompt(t("prompt_root_category"));
-            if (finalPath) {
-                try {
-                    await API.createCategory(finalPath);
-                    this.loadFiles();
-                } catch (err) {
-                    UI.showNotification(t("notif_category_fail", { error: err.message }), "error");
-                }
+            let finalPath = path;
+            if (!finalPath) {
+                const folder = this.getSelectedFolderPath();
+                const name = await UI.prompt(
+                    folder ? t("prompt_subcategory") : t("prompt_root_category"),
+                    {
+                        title: folder ? t("dialog_new_subcategory") : t("dialog_new_category"),
+                        placeholder: folder ? t("prompt_subcategory") : t("prompt_root_category"),
+                    }
+                );
+                if (!name) return;
+                finalPath = folder ? `${folder}/${name}` : name;
+            }
+            try {
+                await API.createCategory(finalPath);
+                this.loadFiles();
+            } catch (err) {
+                UI.showNotification(t("notif_category_fail", { error: err.message }), "error");
             }
         });
     }
