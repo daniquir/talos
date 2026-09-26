@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - Constant-time compares for HMAC / shared-secret checks (web/storage/bunker)
 
 ### Fixed
+- Web vault search: a query with no matches no longer redisplays the entire tree (jsTree `show_only_matches` quirk)
 - Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
 - API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)
 - `require_auth`: return JSON `{ error }` on 401 instead of an empty body
