@@ -315,6 +315,13 @@ async function handleMessage(message, sender) {
       assertSecureServerUrl(cfg.serverUrl);
       const granted = await ensureHostPermission(cfg.serverUrl);
       if (!granted) throw new Error("Host permission denied for Talos server");
+      if (cfg.oidcIssuer) {
+        try {
+          await ensureHostPermission(cfg.oidcIssuer);
+        } catch {
+          /* optional until OIDC used; token fetch may still fail with a clear error */
+        }
+      }
 
       try {
         let data;

@@ -197,7 +197,7 @@ globalThis.TALOS_LOCALES = {
     "ext_oidc_issuer": "OIDC issuer (Keycloak realm)",
     "ext_oidc_client": "OIDC client id",
     "ext_oidc_redirect": "OIDC redirect URI (add in Keycloak)",
-    "ext_oidc_redirect_help": "Copy this exact value into Keycloak → Clients → talos-extension → Valid redirect URIs."
+    "ext_oidc_redirect_help": "Copy this exact value into Keycloak → Clients → talos-extension → Valid redirect URIs. On Firefox this is a 127.0.0.1/mozoauth2 URL (covered by http://127.0.0.1/*)."
   },
   "es": {
     "lang_name": "Español",
@@ -396,6 +396,6 @@ globalThis.TALOS_LOCALES = {
     "ext_oidc_issuer": "Issuer OIDC (realm Keycloak)",
     "ext_oidc_client": "Client id OIDC",
     "ext_oidc_redirect": "URI de redirección OIDC (añadir en Keycloak)",
-    "ext_oidc_redirect_help": "Copia este valor exacto en Keycloak → Clients → talos-extension → Valid redirect URIs."
+    "ext_oidc_redirect_help": "Copia este valor exacto en Keycloak → Clients → talos-extension → Valid redirect URIs. En Firefox es una URL 127.0.0.1/mozoauth2 (cubierta por http://127.0.0.1/*)."
   }
 };

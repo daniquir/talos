@@ -195,5 +195,5 @@
   "ext_oidc_issuer": "OIDC issuer (Keycloak realm)",
   "ext_oidc_client": "OIDC client id",
   "ext_oidc_redirect": "OIDC redirect URI (add in Keycloak)",
-  "ext_oidc_redirect_help": "Copy this exact value into Keycloak → Clients → talos-extension → Valid redirect URIs."
+  "ext_oidc_redirect_help": "Copy this exact value into Keycloak → Clients → talos-extension → Valid redirect URIs. On Firefox this is a 127.0.0.1/mozoauth2 URL (covered by http://127.0.0.1/*)."
 }

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Extension unlock: clearer error when OIDC redirect fails (`not_found` is Keycloak/identity redirect, not a bad vault passphrase); options show the exact redirect URI to register
+- Extension OIDC on Firefox: use `http://127.0.0.1/mozoauth2/<hash>/` instead of `*.extensions.allizom.org` (avoids identity `not_found` after Keycloak login)
 - Host match: also compare path segments so Firefox-import layout `web/<host>/<account>` matches (e.g. namecheap.com)
 - Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
 - API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)

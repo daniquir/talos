@@ -40,10 +40,10 @@ Admin console: `https://dev.kanda.cloud:8483` (realm `master` to administer).
    - Standard flow on. PKCE S256 OK (the web app sends it).
    - Copy the client secret into `.env.prod` `OIDC_CLIENT_SECRET`.
 5. Client **`talos-extension`** (public): PKCE S256. Valid redirect URIs:
-   - `http://127.0.0.1/*` / `http://localhost/*` (dev / temporary add-on)
+   - `http://127.0.0.1/*` / `http://localhost/*` (dev + **Firefox AMO loopback** `http://127.0.0.1/mozoauth2/<hash>/`)
    - `https://*.chromiumapp.org/*` (Chrome / Edge)
-   - `https://*.extensions.allizom.org/*` (Firefox AMO — required for listed **talos-vault**)
-   - Or the exact URI from a failed login (`https://<hash>.extensions.allizom.org/`)
+   - `https://*.extensions.allizom.org/*` (optional fallback; Firefox often fails this host with `not_found`)
+   - Web Origins: `*` (token exchange from the extension)
 6. Create **your** user (not `dev`). Roles: `talos-user` (and `talos-admin` only if you want operator unseal later). Turn on OTP if you already use Authenticator.
 
 Never use realm `master` for the vault.

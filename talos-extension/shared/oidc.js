@@ -19,20 +19,58 @@ async function challengeS256(verifier) {
   return b64url(digest);
 }
 
+function isGecko() {
+  try {
+    return String(chrome.runtime.getURL("")).startsWith("moz-extension:");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Redirect URI for identity.launchWebAuthFlow.
+ * Firefox AMO: prefer loopback mozoauth2 — allizom.org intercept often fails with
+ * a bare `not_found` after Keycloak login (DNS/404 on the dummy host).
+ * Chrome/Edge: use the chromiumapp.org URL from getRedirectURL().
+ */
+export function getOidcRedirectUri() {
+  const identityUrl = chrome.identity.getRedirectURL();
+  if (!isGecko()) return identityUrl;
+  try {
+    const host = new URL(identityUrl).hostname;
+    // https://<hash>.extensions.allizom.org/ → http://127.0.0.1/mozoauth2/<hash>/
+    const m = host.match(
+      /^([a-f0-9]+)\.extensions\.(allizom|mozilla)\.org$/i
+    );
+    if (m) {
+      return `http://127.0.0.1/mozoauth2/${m[1]}/`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return identityUrl;
+}
+
 function explainOidcFailure(raw, { issuer, clientId, redirectUri }) {
   const msg = String(raw || "unknown").trim();
   const lower = msg.toLowerCase();
   if (lower === "not_found" || lower.includes("not_found")) {
     return (
-      `OIDC redirect failed (not_found). This is not the vault passphrase. ` +
-      `In Keycloak client "${clientId}", Valid redirect URIs must include exactly:\n${redirectUri}\n` +
-      `Also allow https://*.extensions.allizom.org/* (Firefox AMO) and https://*.chromiumapp.org/* (Chrome). ` +
-      `Issuer in options must be ${issuer}`
+      `OIDC redirect failed (not_found). This is NOT the vault passphrase. ` +
+      `Keycloak client "${clientId}" must allow this redirect URI exactly:\n${redirectUri}\n` +
+      `(Firefox uses http://127.0.0.1/mozoauth2/<hash>/ — covered by http://127.0.0.1/* if present.) ` +
+      `Issuer: ${issuer}`
     );
   }
   if (lower.includes("redirect") || lower.includes("invalid_request")) {
     return (
       `OIDC redirect_uri rejected. Register this exact URI on client "${clientId}":\n${redirectUri}`
+    );
+  }
+  if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
+    return (
+      `Cannot reach Keycloak token endpoint (${issuer}). ` +
+      `Grant the extension host permission for that origin and check the issuer URL.`
     );
   }
   return `OIDC login failed: ${msg}`;
@@ -45,7 +83,7 @@ export async function loginOidc({ issuer, clientId }) {
   if (!issuer || !clientId) {
     throw new Error("Configure OIDC issuer and client id in extension options");
   }
-  const redirectUri = chrome.identity.getRedirectURL();
+  const redirectUri = getOidcRedirectUri();
   const verifier = randomVerifier();
   const challenge = await challengeS256(verifier);
   const state = randomVerifier().slice(0, 16);
