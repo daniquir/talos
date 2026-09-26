@@ -193,5 +193,7 @@
   "btn_oidc_login": "Sign in with Keycloak",
   "login_oidc_hint": "Enter your passphrase to unlock the vault",
   "ext_oidc_issuer": "OIDC issuer (Keycloak realm)",
-  "ext_oidc_client": "OIDC client id"
+  "ext_oidc_client": "OIDC client id",
+  "ext_oidc_redirect": "OIDC redirect URI (add in Keycloak)",
+  "ext_oidc_redirect_help": "Copy this exact value into Keycloak → Clients → talos-extension → Valid redirect URIs."
 }

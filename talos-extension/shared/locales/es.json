@@ -193,5 +193,7 @@
   "btn_oidc_login": "Entrar con Keycloak",
   "login_oidc_hint": "Introduce la passphrase para desbloquear el vault",
   "ext_oidc_issuer": "Issuer OIDC (realm Keycloak)",
-  "ext_oidc_client": "Client id OIDC"
+  "ext_oidc_client": "Client id OIDC",
+  "ext_oidc_redirect": "URI de redirección OIDC (añadir en Keycloak)",
+  "ext_oidc_redirect_help": "Copia este valor exacto en Keycloak → Clients → talos-extension → Valid redirect URIs."
 }

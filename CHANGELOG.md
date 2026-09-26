@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Extension unlock: clearer error when OIDC redirect fails (`not_found` is Keycloak/identity redirect, not a bad vault passphrase); options show the exact redirect URI to register
+- Host match: also compare path segments so Firefox-import layout `web/<host>/<account>` matches (e.g. namecheap.com)
+- Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
+- API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)
+- `require_auth`: return JSON `{ error }` on 401 instead of an empty body
+
 ### Security
 - `/api/auth/backup-key` now requires full vault auth (`require_auth`); anonymous GPG private-key export closed
 - `/api/initialize` and `/api/initialize/import` require OIDC identity when multi-user is on (`require_setup_identity`)
@@ -12,11 +19,6 @@ All notable changes to this project will be documented in this file.
 - CSRF validation fixed (`Ok(false)` was treated as success); tokens are cryptographically random
 - Rate limits honor `X-Forwarded-For` (leftmost) behind Apache
 - Constant-time compares for HMAC / shared-secret checks (web/storage/bunker)
-
-### Fixed
-- Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
-- API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)
-- `require_auth`: return JSON `{ error }` on 401 instead of an empty body
 
 ## [1.2.1] - 2026-09-25
 
