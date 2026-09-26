@@ -84,15 +84,40 @@ const App = {
         };
 
         UI.elements.treeSearch.addEventListener('input', (e) => {
-            const searchTerm = e.target.value;
-            UI.elements.treeContainer.jstree(true).search(searchTerm);
-            UI.elements.clearSearch.classList.toggle('hidden', !searchTerm);
+            const raw = e.target.value;
+            const searchTerm = raw.trim();
+            const tree = UI.elements.treeContainer.jstree(true);
+            UI.elements.clearSearch.classList.toggle('hidden', !raw);
+            if (!tree) return;
+            // Empty query must clear the filter. Searching "" with show_only_matches
+            // leaves the tree looking "full" in a confusing way.
+            if (!searchTerm) {
+                tree.clear_search();
+                return;
+            }
+            tree.search(searchTerm);
         });
 
         UI.elements.clearSearch.addEventListener('click', () => {
             UI.elements.treeSearch.value = '';
-            UI.elements.treeContainer.jstree(true).clear_search();
+            const tree = UI.elements.treeContainer.jstree(true);
+            if (tree) tree.clear_search();
             UI.elements.clearSearch.classList.add('hidden');
+        });
+
+        // jsTree: zero matches + show_only_matches often redisplays the whole tree.
+        // Force an empty view when the query is non-empty and nothing matched.
+        UI.elements.treeContainer.on('search.jstree', (_e, data) => {
+            const tree = UI.elements.treeContainer.jstree(true);
+            if (!tree || !data?.str) return;
+            const hits = data.res || data.nodes || [];
+            if (hits.length === 0) {
+                tree.hide_all();
+            }
+        });
+        UI.elements.treeContainer.on('clear_search.jstree', () => {
+            const tree = UI.elements.treeContainer.jstree(true);
+            if (tree) tree.show_all();
         });
 
         // jsTree event listener for selection
