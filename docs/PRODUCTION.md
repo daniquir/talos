@@ -23,7 +23,7 @@ Do **not** put HashiCorp unseal keys in here until you have logged in once and t
 2. Wildcard TLS already on Apache (`kanda-cloud.crt` / `.key` / `.ca-bundle`).
 3. Keycloak NDK running on `:8483`.
 4. A DNS **A** record: host `talos` → `151.237.59.10`. Optional AdGuard rewrite → `10.20.30.40`.
-5. This git clone (or the tagged images after `v1.2.1` is pushed to **`kandacloud/talos`**).
+5. This git clone (or the tagged images after `v1.2.2` is pushed to **`kandacloud/talos`**).
 
 Port **3000 on the host** belongs to AdGuard. Production TALOS does not bind it.
 
@@ -40,10 +40,10 @@ Admin console: `https://dev.kanda.cloud:8483` (realm `master` to administer).
    - Standard flow on. PKCE S256 OK (the web app sends it).
    - Copy the client secret into `.env.prod` `OIDC_CLIENT_SECRET`.
 5. Client **`talos-extension`** (public): PKCE S256. Valid redirect URIs:
-   - `http://127.0.0.1/*` / `http://localhost/*` (dev / temporary add-on)
+   - `http://127.0.0.1/*` / `http://localhost/*` (dev + **Firefox AMO loopback** `http://127.0.0.1/mozoauth2/<hash>/`)
    - `https://*.chromiumapp.org/*` (Chrome / Edge)
-   - `https://*.extensions.allizom.org/*` (Firefox AMO — required for listed **talos-vault**)
-   - Or the exact URI from a failed login (`https://<hash>.extensions.allizom.org/`)
+   - `https://*.extensions.allizom.org/*` (optional fallback; Firefox often fails this host with `not_found`)
+   - Web Origins: `*` (token exchange from the extension)
 6. Create **your** user (not `dev`). Roles: `talos-user` (and `talos-admin` only if you want operator unseal later). Turn on OTP if you already use Authenticator.
 
 Never use realm `master` for the vault.
@@ -81,7 +81,7 @@ docker compose -f docker-compose.prod.yaml --env-file .env.prod up --build -d
 docker compose -f docker-compose.prod.yaml ps
 ```
 
-First build on the N100 takes several minutes (Rust). After GitHub tag `v1.2.1` publishes **`kandacloud/talos:{ver}-web|storage|bunker`**, prefer:
+First build on the N100 takes several minutes (Rust). After GitHub tag `v1.2.2` publishes **`kandacloud/talos:{ver}-web|storage|bunker`**, prefer:
 
 ```bash
 docker compose -f docker-compose.prod.yaml --env-file .env.prod pull

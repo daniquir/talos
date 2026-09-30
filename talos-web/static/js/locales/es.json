@@ -66,6 +66,7 @@
   "footer_coded": "Hecho con",
   "footer_by": "por",
   "password": "Contraseña",
+  "secret_corrupted_hint": "La contraseña almacenada parece corrupta (bug KEEP antiguo). Edita este secreto y escribe una contraseña nueva.",
   "no_description": "Sin descripción.",
   "user": "Usuario",
   "url": "URL",

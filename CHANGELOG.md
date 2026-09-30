@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-09-30
+
+Patch release: auth hardening from 1.2.1 plus extension/web UX fixes (OIDC Firefox unlock, capture nag, vault search, KEEP corruption recovery, stuck save button). Deploy **`kandacloud/talos:1.2.2-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.2`. Firefox extension: register Keycloak redirect `http://127.0.0.1/mozoauth2/<hash>/` (see [docs/PRODUCTION.md](docs/PRODUCTION.md)).
+
 ### Security
 - `/api/auth/backup-key` now requires full vault auth (`require_auth`); anonymous GPG private-key export closed
 - `/api/initialize` and `/api/initialize/import` require OIDC identity when multi-user is on (`require_setup_identity`)
@@ -14,6 +18,15 @@ All notable changes to this project will be documented in this file.
 - Constant-time compares for HMAC / shared-secret checks (web/storage/bunker)
 
 ### Fixed
+- Extension inline icon: skip OTP/PIN digit boxes and other tiny inputs so the affordance does not cover typed characters
+- Extension unlock: clearer error when OIDC redirect fails (`not_found` is Keycloak/identity redirect, not a bad vault passphrase); options show the exact redirect URI to register
+- Extension OIDC on Firefox: use `http://127.0.0.1/mozoauth2/<hash>/` instead of `*.extensions.allizom.org` (avoids identity `not_found` after Keycloak login)
+- Host match: also compare path segments so Firefox-import layout `web/<host>/<account>` matches (e.g. namecheap.com)
+- Extension capture: only offer Save/Update when the stored record differs (or is new); skip the doorhanger on unchanged logins
+- Web vault search: empty/no-match queries no longer redisplay the whole tree; active filter is re-applied after create/save/delete refreshes the tree
+- Web secret editor: save button no longer stays stuck on “Saving…” after a successful save (blocked later edits)
+- KEEP-secret save: refuse to re-preserve a stored password that is already the KEEP/HIDDEN marker (forces an explicit new password for entries corrupted before 1.2.1)
+- Web secret editor: typing in the password field clears KEEP mode so an empty re-save cannot rewrite a corrupted secret
 - Web secret viewer: field actions (copy / reveal) stay next to the value and remain visible without hover — no more chasing icons across wide screens
 - API client: surface real HTTP/auth errors when the response body is empty (was a useless `JSON.parse` message)
 - `require_auth`: return JSON `{ error }` on 401 instead of an empty body

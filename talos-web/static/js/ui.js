@@ -73,14 +73,27 @@ export const UI = {
         }
         if (this.elements.entrySecret) {
             this.elements.entrySecret.addEventListener('input', () => {
+                // Typing a new password must leave KEEP mode; otherwise a later
+                // clear-to-empty save would re-write a previously corrupted secret.
+                this.elements.entrySecret.dataset.keepSecret = '';
                 if (this.elements.entrySecret.dataset.clearSecret === '1') {
                     this.elements.entrySecret.dataset.clearSecret = '';
+                }
+                if (this.elements.entrySecret.placeholder === t('ph_secret_unchanged')
+                    || this.elements.entrySecret.placeholder === t('ph_secret_cleared')) {
+                    this.elements.entrySecret.placeholder = t('ph_secret');
                 }
             });
         }
     },
 
     openModal({ focusPath = false } = {}) {
+        // Defense: a prior successful save used to leave the submit button stuck
+        // on disabled/"Saving…" because edit paths do not call clearForm().
+        if (this.elements.btnExecuteSecret) {
+            this.elements.btnExecuteSecret.disabled = false;
+            this.elements.btnExecuteSecret.innerText = t('btn_execute');
+        }
         this.elements.modal.classList.remove('hidden');
         if (focusPath && this.elements.entryPath) {
             requestAnimationFrame(() => {
@@ -501,6 +514,15 @@ export const UI = {
         };
 
         const renderRevealed = (secret) => {
+            if (
+                secret === '__TALOS_KEEP_SECRET__'
+                || secret === '__TALOS_HIDDEN_SECRET__'
+                || (typeof secret === 'string' && secret.startsWith('-----BEGIN'))
+            ) {
+                passValue.className = 'text-amber-400 font-bold break-all whitespace-pre-wrap leading-relaxed min-w-0';
+                passValue.innerText = t('secret_corrupted_hint');
+                return;
+            }
             const values = this.splitSecretValues(secret);
             passValue.innerHTML = '';
             if (values.length <= 1) {

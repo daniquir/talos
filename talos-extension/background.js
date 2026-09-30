@@ -315,6 +315,13 @@ async function handleMessage(message, sender) {
       assertSecureServerUrl(cfg.serverUrl);
       const granted = await ensureHostPermission(cfg.serverUrl);
       if (!granted) throw new Error("Host permission denied for Talos server");
+      if (cfg.oidcIssuer) {
+        try {
+          await ensureHostPermission(cfg.oidcIssuer);
+        } catch {
+          /* optional until OIDC used; token fetch may still fail with a clear error */
+        }
+      }
 
       try {
         let data;
@@ -512,6 +519,8 @@ async function handleMessage(message, sender) {
     case "CAPTURE_OFFER": {
       const host = String(message.host || "").trim();
       const username = String(message.username || "").trim();
+      const password = String(message.password || "");
+      const url = String(message.url || "").trim();
       if (!host) throw new Error("host required");
       if (await isCaptureNeverHost(host)) {
         return { kind: "ignored", reason: "never" };
@@ -529,6 +538,28 @@ async function handleMessage(message, sender) {
         (m) => m.username && normalizeUsername(m.username) === want
       );
       if (hit) {
+        // Only suggest Update when we can prove the stored record differs.
+        // If the vault is locked (or no password was captured), skip the
+        // doorhanger — otherwise every login nags to re-save an existing entry.
+        if (!memoryUnlocked() || password.length < 2) {
+          return { kind: "ignored", reason: "unverified" };
+        }
+        try {
+          const raw = await API.decrypt(hit.path, session.token, true);
+          const existing = parseCredential(raw);
+          const samePass = existing.password === password;
+          const sameUser =
+            normalizeUsername(existing.username || "") === want;
+          const sameUrl =
+            !url ||
+            !existing.url ||
+            urlsLooselyEqual(url, existing.url);
+          if (samePass && sameUser && sameUrl) {
+            return { kind: "ignored", reason: "unchanged" };
+          }
+        } catch {
+          /* decrypt failed — fall through and offer update */
+        }
         return {
           kind: "update",
           path: hit.path,
@@ -782,6 +813,21 @@ function hostFromUrl(url) {
   } catch {
     return null;
   }
+}
+
+/** Compare login URLs ignoring trailing slash / default ports / trivial noise. */
+function urlsLooselyEqual(a, b) {
+  const norm = (raw) => {
+    try {
+      const u = new URL(raw, "https://invalid.invalid");
+      const host = (u.host || "").toLowerCase().replace(/^www\./, "");
+      const path = (u.pathname || "/").replace(/\/+$/, "") || "";
+      return `${u.protocol}//${host}${path}`;
+    } catch {
+      return String(raw || "").trim().toLowerCase().replace(/\/+$/, "");
+    }
+  };
+  return norm(a) === norm(b);
 }
 
 async function setBadge(tabId, count) {

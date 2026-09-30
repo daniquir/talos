@@ -19,6 +19,63 @@ async function challengeS256(verifier) {
   return b64url(digest);
 }
 
+function isGecko() {
+  try {
+    return String(chrome.runtime.getURL("")).startsWith("moz-extension:");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Redirect URI for identity.launchWebAuthFlow.
+ * Firefox AMO: prefer loopback mozoauth2 — allizom.org intercept often fails with
+ * a bare `not_found` after Keycloak login (DNS/404 on the dummy host).
+ * Chrome/Edge: use the chromiumapp.org URL from getRedirectURL().
+ */
+export function getOidcRedirectUri() {
+  const identityUrl = chrome.identity.getRedirectURL();
+  if (!isGecko()) return identityUrl;
+  try {
+    const host = new URL(identityUrl).hostname;
+    // https://<hash>.extensions.allizom.org/ → http://127.0.0.1/mozoauth2/<hash>/
+    const m = host.match(
+      /^([a-f0-9]+)\.extensions\.(allizom|mozilla)\.org$/i
+    );
+    if (m) {
+      return `http://127.0.0.1/mozoauth2/${m[1]}/`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return identityUrl;
+}
+
+function explainOidcFailure(raw, { issuer, clientId, redirectUri }) {
+  const msg = String(raw || "unknown").trim();
+  const lower = msg.toLowerCase();
+  if (lower === "not_found" || lower.includes("not_found")) {
+    return (
+      `OIDC redirect failed (not_found). This is NOT the vault passphrase. ` +
+      `Keycloak client "${clientId}" must allow this redirect URI exactly:\n${redirectUri}\n` +
+      `(Firefox uses http://127.0.0.1/mozoauth2/<hash>/ — covered by http://127.0.0.1/* if present.) ` +
+      `Issuer: ${issuer}`
+    );
+  }
+  if (lower.includes("redirect") || lower.includes("invalid_request")) {
+    return (
+      `OIDC redirect_uri rejected. Register this exact URI on client "${clientId}":\n${redirectUri}`
+    );
+  }
+  if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
+    return (
+      `Cannot reach Keycloak token endpoint (${issuer}). ` +
+      `Grant the extension host permission for that origin and check the issuer URL.`
+    );
+  }
+  return `OIDC login failed: ${msg}`;
+}
+
 /**
  * Interactive OIDC login; returns id_token from Keycloak token endpoint.
  */
@@ -26,12 +83,13 @@ export async function loginOidc({ issuer, clientId }) {
   if (!issuer || !clientId) {
     throw new Error("Configure OIDC issuer and client id in extension options");
   }
-  const redirectUri = chrome.identity.getRedirectURL();
+  const redirectUri = getOidcRedirectUri();
   const verifier = randomVerifier();
   const challenge = await challengeS256(verifier);
   const state = randomVerifier().slice(0, 16);
+  const issuerBase = issuer.replace(/\/+$/, "");
   const authUrl =
-    `${issuer.replace(/\/+$/, "")}/protocol/openid-connect/auth` +
+    `${issuerBase}/protocol/openid-connect/auth` +
     `?client_id=${encodeURIComponent(clientId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&response_type=code` +
@@ -40,20 +98,32 @@ export async function loginOidc({ issuer, clientId }) {
     `&code_challenge=${encodeURIComponent(challenge)}` +
     `&code_challenge_method=S256`;
 
-  const redirected = await chrome.identity.launchWebAuthFlow({
-    url: authUrl,
-    interactive: true,
-  });
+  let redirected;
+  try {
+    redirected = await chrome.identity.launchWebAuthFlow({
+      url: authUrl,
+      interactive: true,
+    });
+  } catch (e) {
+    throw new Error(
+      explainOidcFailure(e?.message || e, { issuer: issuerBase, clientId, redirectUri })
+    );
+  }
   if (!redirected) throw new Error("OIDC login cancelled");
   const u = new URL(redirected);
   const err = u.searchParams.get("error");
-  if (err) throw new Error(err);
+  if (err) {
+    const desc = u.searchParams.get("error_description") || err;
+    throw new Error(
+      explainOidcFailure(desc, { issuer: issuerBase, clientId, redirectUri })
+    );
+  }
   const code = u.searchParams.get("code");
   const st = u.searchParams.get("state");
   if (!code) throw new Error("Missing OIDC code");
   if (st !== state) throw new Error("OIDC state mismatch");
 
-  const tokenUrl = `${issuer.replace(/\/+$/, "")}/protocol/openid-connect/token`;
+  const tokenUrl = `${issuerBase}/protocol/openid-connect/token`;
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
@@ -68,7 +138,12 @@ export async function loginOidc({ issuer, clientId }) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error_description || data.error || `OIDC token HTTP ${res.status}`);
+    throw new Error(
+      explainOidcFailure(
+        data.error_description || data.error || `OIDC token HTTP ${res.status}`,
+        { issuer: issuerBase, clientId, redirectUri }
+      )
+    );
   }
   if (!data.id_token) throw new Error("Missing id_token");
   return {

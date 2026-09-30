@@ -64,7 +64,7 @@ Build a zip (no signing — stores sign on upload or via their tooling):
 
 ```bash
 ./talos-extension/scripts/package.sh
-# → dist/talos-extension-v1.2.1.zip
+# → dist/talos-extension-v1.2.2.zip
 ```
 
 ### Chrome Web Store

@@ -83,16 +83,30 @@ const App = {
             if (healthy) this.loadFiles();
         };
 
-        UI.elements.treeSearch.addEventListener('input', (e) => {
-            const searchTerm = e.target.value;
-            UI.elements.treeContainer.jstree(true).search(searchTerm);
-            UI.elements.clearSearch.classList.toggle('hidden', !searchTerm);
-        });
+        UI.elements.treeSearch.addEventListener('input', () => this.applyTreeSearch());
 
         UI.elements.clearSearch.addEventListener('click', () => {
             UI.elements.treeSearch.value = '';
-            UI.elements.treeContainer.jstree(true).clear_search();
-            UI.elements.clearSearch.classList.add('hidden');
+            this.applyTreeSearch();
+        });
+
+        // jsTree: zero matches + show_only_matches often redisplays the whole tree.
+        // Force an empty view when the query is non-empty and nothing matched.
+        UI.elements.treeContainer.on('search.jstree', (_e, data) => {
+            const tree = UI.elements.treeContainer.jstree(true);
+            if (!tree || !data?.str) return;
+            const hits = data.res || data.nodes || [];
+            if (hits.length === 0) {
+                tree.hide_all();
+            }
+        });
+        UI.elements.treeContainer.on('clear_search.jstree', () => {
+            const tree = UI.elements.treeContainer.jstree(true);
+            if (tree) tree.show_all();
+        });
+        // After create/save/delete the tree is rebuilt; keep the active filter applied.
+        UI.elements.treeContainer.on('refresh.jstree', () => {
+            this.applyTreeSearch();
         });
 
         // jsTree event listener for selection
@@ -362,10 +376,29 @@ const App = {
         }
     },
 
+    /** Apply (or clear) the sidebar search against the current jsTree instance. */
+    applyTreeSearch() {
+        const raw = UI.elements.treeSearch?.value || '';
+        const searchTerm = raw.trim();
+        const tree = UI.elements.treeContainer.jstree(true);
+        UI.elements.clearSearch.classList.toggle('hidden', !raw);
+        if (!tree) return;
+        // Empty query must clear the filter. Searching "" with show_only_matches
+        // leaves the tree looking "full" in a confusing way.
+        if (!searchTerm) {
+            tree.clear_search();
+            return;
+        }
+        tree.search(searchTerm);
+    },
+
     async loadFiles() {
         try {
             const tree = await API.fetchTree();
             UI.renderTree(tree, (node) => this.getContextMenuItems(node));
+            // renderTree refresh is async; refresh.jstree also re-applies, but
+            // first paint after a cold create needs an explicit pass.
+            requestAnimationFrame(() => this.applyTreeSearch());
         } catch (e) {
             console.warn("Tree load skipped:", e.message);
         }
@@ -483,7 +516,6 @@ const App = {
             || UI.elements.form.querySelector('button[type="submit"]');
         if (btn?.disabled) return;
 
-        const prevLabel = btn ? btn.innerText : t("btn_execute");
         if (btn) {
             btn.disabled = true;
             btn.innerText = t("btn_saving");
@@ -503,9 +535,11 @@ const App = {
             } catch (err) {
                 UI.showNotification(t("notif_save_fail", { error: err.message }), "error");
             } finally {
-                if (btn && !UI.elements.modal.classList.contains('hidden')) {
+                // Always restore — on success closeModal() runs first, so gating
+                // on "modal still open" left the button stuck on "Saving…".
+                if (btn) {
                     btn.disabled = false;
-                    btn.innerText = prevLabel;
+                    btn.innerText = t("btn_execute");
                 }
             }
         });
