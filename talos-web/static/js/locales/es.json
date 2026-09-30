@@ -66,6 +66,8 @@
   "footer_coded": "Hecho con",
   "footer_by": "por",
   "password": "Contraseña",
+  "reveal_hold": "Clic para ver 1,5 s, o mantén pulsado para ver mientras lo sostienes",
+  "reveal_loading": "Descifrando…",
   "secret_corrupted_hint": "La contraseña almacenada parece corrupta (bug KEEP antiguo). Edita este secreto y escribe una contraseña nueva.",
   "no_description": "Sin descripción.",
   "user": "Usuario",

@@ -434,7 +434,8 @@ export const UI = {
         viewer.appendChild(titleEl);
         viewer.appendChild(descEl);
 
-        // 3. Field rows — actions stay next to the value (not at the far right edge).
+        // 3. Field rows — fixed action strip before the value so long secrets
+        // never shove the buttons around.
         const fieldsContainer = document.createElement('div');
         fieldsContainer.className = 'space-y-5 max-w-2xl';
 
@@ -442,9 +443,9 @@ export const UI = {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.title = title || '';
-            btn.className = 'shrink-0 p-1.5 rounded-sm border border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:text-green-400 hover:border-green-900/50 transition-colors';
+            btn.className = 'shrink-0 p-1.5 rounded-sm border border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:text-green-400 hover:border-green-900/50 transition-colors select-none touch-manipulation';
             btn.innerHTML = `<i data-lucide="${icon}" class="w-3.5 h-3.5"></i>`;
-            btn.onclick = onClick;
+            if (onClick) btn.onclick = onClick;
             return btn;
         };
 
@@ -461,17 +462,17 @@ export const UI = {
             if (!value) return null;
 
             const row = document.createElement('div');
-            row.className = 'flex items-start gap-4';
+            row.className = 'flex items-start gap-3';
 
             const labelEl = document.createElement('span');
             labelEl.className = 'w-20 shrink-0 pt-1.5 text-zinc-500 text-xs uppercase tracking-widest';
             labelEl.innerText = label;
 
-            const body = document.createElement('div');
-            body.className = 'flex items-start gap-2 min-w-0';
+            const actions = document.createElement('div');
+            actions.className = 'flex items-center gap-1 shrink-0 pt-0.5';
 
             const valueEl = document.createElement('span');
-            valueEl.className = 'text-zinc-300 break-all leading-relaxed';
+            valueEl.className = 'text-zinc-300 break-all leading-relaxed min-w-0 flex-1';
             valueEl.innerText = value;
 
             const copyBtn = makeActionBtn('copy', t('copy_all'), () => {
@@ -479,29 +480,26 @@ export const UI = {
                 flashOk(copyBtn, 'copy');
             });
 
-            body.appendChild(valueEl);
-            body.appendChild(copyBtn);
+            actions.appendChild(copyBtn);
             row.appendChild(labelEl);
-            row.appendChild(body);
+            row.appendChild(actions);
+            row.appendChild(valueEl);
             return row;
         };
 
         const passwordRow = document.createElement('div');
-        passwordRow.className = 'flex items-start gap-4';
+        passwordRow.className = 'flex items-start gap-3';
 
         const passLabel = document.createElement('span');
         passLabel.className = 'w-20 shrink-0 pt-1.5 text-zinc-500 text-xs uppercase tracking-widest';
         passLabel.innerText = t('password');
 
-        const passBody = document.createElement('div');
-        passBody.className = 'flex items-start gap-2 min-w-0 flex-1';
+        const passButtons = document.createElement('div');
+        passButtons.className = 'flex items-center gap-1 shrink-0 pt-0.5';
 
         const passValue = document.createElement('div');
-        passValue.className = 'text-zinc-300 font-bold leading-relaxed min-w-0';
+        passValue.className = 'text-zinc-300 font-bold leading-relaxed min-w-0 flex-1';
         passValue.innerText = '••••••••••••';
-
-        const passButtons = document.createElement('div');
-        passButtons.className = 'flex items-center gap-1 shrink-0';
 
         const fetchSecret = async () => {
             const fullData = await API.decrypt(path, true);
@@ -510,7 +508,7 @@ export const UI = {
         };
 
         const maskPassword = () => {
-            passValue.className = 'text-zinc-300 font-bold leading-relaxed min-w-0';
+            passValue.className = 'text-zinc-300 font-bold leading-relaxed min-w-0 flex-1';
             passValue.innerText = '••••••••••••';
         };
 
@@ -520,76 +518,178 @@ export const UI = {
                 || secret === '__TALOS_HIDDEN_SECRET__'
                 || (typeof secret === 'string' && secret.startsWith('-----BEGIN'))
             ) {
-                passValue.className = 'text-amber-400 font-bold break-all whitespace-pre-wrap leading-relaxed min-w-0';
+                passValue.className = 'text-amber-400 font-bold break-all whitespace-pre-wrap leading-relaxed min-w-0 flex-1';
                 passValue.innerText = t('secret_corrupted_hint');
                 return;
             }
             const values = this.splitSecretValues(secret);
             passValue.innerHTML = '';
             if (values.length <= 1) {
-                passValue.className = 'text-zinc-300 font-bold break-all whitespace-pre-wrap leading-relaxed min-w-0';
+                passValue.className = 'text-zinc-300 font-bold break-all whitespace-pre-wrap leading-relaxed min-w-0 flex-1';
                 passValue.innerText = secret || '';
                 return;
             }
-            passValue.className = 'text-zinc-300 font-bold space-y-2 min-w-0';
+            passValue.className = 'text-zinc-300 font-bold space-y-2 min-w-0 flex-1';
             values.forEach((val, i) => {
                 const item = document.createElement('div');
                 item.className = 'flex items-start gap-2';
                 const idx = document.createElement('span');
                 idx.className = 'text-zinc-600 text-[0.625rem] w-4 shrink-0 pt-1';
                 idx.innerText = String(i + 1);
-                const text = document.createElement('span');
-                text.className = 'break-all font-mono text-sm';
-                text.innerText = val;
+                const textEl = document.createElement('span');
+                textEl.className = 'break-all font-mono text-sm min-w-0 flex-1';
+                textEl.innerText = val;
                 const copyOne = makeActionBtn('copy', t('copy_all'), async (e) => {
                     e.stopPropagation();
                     await navigator.clipboard.writeText(val);
                     flashOk(copyOne, 'copy');
                 });
                 item.appendChild(idx);
-                item.appendChild(text);
                 item.appendChild(copyOne);
+                item.appendChild(textEl);
                 passValue.appendChild(item);
             });
             lucide.createIcons();
         };
 
-        const setEyeIcon = (revealed) => {
-            showBtn.innerHTML = `<i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="w-3.5 h-3.5"></i>`;
+        // Reveal UX:
+        // - Click (or release while loading): decrypt → show 1.5s → auto-hide.
+        // - Long press (≥ HOLD_MS): peek while held; release hides.
+        let pressed = false;
+        let loading = false;
+        let revealed = false;
+        let hideOnRelease = false;
+        let revealSeq = 0;
+        let pressStartedAt = 0;
+        let autoHideTimer = null;
+        const HOLD_MS = 280;
+        const AUTO_HIDE_MS = 1500;
+
+        const setEyeIdle = () => {
+            showBtn.innerHTML = '<i data-lucide="eye" class="w-3.5 h-3.5"></i>';
+            showBtn.classList.remove('text-green-400', 'border-green-800');
+            showBtn.setAttribute('aria-pressed', 'false');
             lucide.createIcons();
         };
+        const setEyeLoading = () => {
+            showBtn.innerHTML = '<i data-lucide="loader-circle" class="w-3.5 h-3.5 animate-spin"></i>';
+            showBtn.classList.add('text-green-400', 'border-green-800');
+            showBtn.setAttribute('aria-pressed', 'true');
+            lucide.createIcons();
+        };
+        const setEyeRevealing = () => {
+            showBtn.innerHTML = '<i data-lucide="eye" class="w-3.5 h-3.5"></i>';
+            showBtn.classList.add('text-green-400', 'border-green-800');
+            showBtn.setAttribute('aria-pressed', 'true');
+            lucide.createIcons();
+        };
+        const setValueLoading = () => {
+            passValue.className = 'text-zinc-500 font-bold leading-relaxed min-w-0 flex-1 inline-flex items-center gap-2';
+            passValue.innerHTML = `<i data-lucide="loader-circle" class="w-3.5 h-3.5 animate-spin text-green-400 shrink-0"></i><span>${t('reveal_loading')}</span>`;
+            lucide.createIcons();
+        };
+        const clearAutoHide = () => {
+            if (autoHideTimer != null) {
+                clearTimeout(autoHideTimer);
+                autoHideTimer = null;
+            }
+        };
+        const hidePassword = () => {
+            clearAutoHide();
+            revealed = false;
+            hideOnRelease = false;
+            maskPassword();
+            setEyeIdle();
+        };
+        const scheduleAutoHide = () => {
+            clearAutoHide();
+            autoHideTimer = setTimeout(() => {
+                autoHideTimer = null;
+                if (revealed && !pressed) hidePassword();
+            }, AUTO_HIDE_MS);
+        };
 
-        // Click toggles reveal. The old press-and-hold used async decrypt on
-        // mousedown + immediate mask on mouseup, so the password never stayed
-        // visible (and a fast click looked like a no-op).
-        let revealed = false;
-        let revealBusy = false;
-        const showBtn = makeActionBtn('eye', t('password'), async (e) => {
+        const showBtn = makeActionBtn('eye', t('reveal_hold'), null);
+        showBtn.setAttribute('aria-label', t('reveal_hold'));
+        showBtn.setAttribute('aria-pressed', 'false');
+
+        const beginPress = async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (revealBusy) return;
-            revealBusy = true;
-            showBtn.disabled = true;
+            if (revealed) {
+                hidePassword();
+                return;
+            }
+            if (loading) return;
+            clearAutoHide();
+            pressed = true;
+            hideOnRelease = true;
+            pressStartedAt = Date.now();
+            loading = true;
+            const seq = ++revealSeq;
+            setEyeLoading();
+            setValueLoading();
             try {
-                if (revealed) {
-                    maskPassword();
-                    revealed = false;
-                    setEyeIcon(false);
-                    return;
-                }
                 const secret = await fetchSecret();
+                if (seq !== revealSeq) return;
+                loading = false;
+                if (!pressed) hideOnRelease = false;
                 renderRevealed(secret);
                 revealed = true;
-                setEyeIcon(true);
+                setEyeRevealing();
+                if (!pressed || !hideOnRelease) scheduleAutoHide();
             } catch (err) {
+                if (seq !== revealSeq) return;
+                loading = false;
+                pressed = false;
+                hideOnRelease = false;
                 maskPassword();
-                revealed = false;
-                setEyeIcon(false);
+                setEyeIdle();
                 this.showNotification(t('notif_error', { error: err.message || String(err) }), 'error');
-            } finally {
-                revealBusy = false;
-                showBtn.disabled = false;
             }
+        };
+
+        const endPress = (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            if (!pressed && !loading && !revealed) return;
+            const heldFor = Date.now() - pressStartedAt;
+            pressed = false;
+            if (loading) {
+                hideOnRelease = false;
+                return;
+            }
+            if (revealed && hideOnRelease) {
+                if (heldFor >= HOLD_MS) {
+                    hidePassword();
+                } else {
+                    hideOnRelease = false;
+                    scheduleAutoHide();
+                }
+            }
+        };
+
+        showBtn.addEventListener('pointerdown', (e) => {
+            if (e.button != null && e.button !== 0) return;
+            try { showBtn.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+            beginPress(e);
+        });
+        showBtn.addEventListener('pointerup', endPress);
+        showBtn.addEventListener('pointercancel', endPress);
+        showBtn.addEventListener('lostpointercapture', endPress);
+        showBtn.addEventListener('keydown', (e) => {
+            if (e.key !== ' ' && e.key !== 'Enter') return;
+            if (e.repeat) return;
+            beginPress(e);
+        });
+        showBtn.addEventListener('keyup', (e) => {
+            if (e.key !== ' ' && e.key !== 'Enter') return;
+            endPress(e);
+        });
+        showBtn.addEventListener('blur', () => {
+            if (pressed) endPress();
         });
 
         const copyBtn = makeActionBtn('copy', t('copy_all'), async () => {
@@ -604,10 +704,9 @@ export const UI = {
 
         passButtons.appendChild(showBtn);
         passButtons.appendChild(copyBtn);
-        passBody.appendChild(passValue);
-        passBody.appendChild(passButtons);
         passwordRow.appendChild(passLabel);
-        passwordRow.appendChild(passBody);
+        passwordRow.appendChild(passButtons);
+        passwordRow.appendChild(passValue);
 
         if (url) fieldsContainer.appendChild(createMetadataRow(t('url'), url));
         if (user) fieldsContainer.appendChild(createMetadataRow(t('user'), user));
