@@ -28,6 +28,12 @@
     </label>
 
     <label class="field">
+      <span data-i18n="ext_oidc_redirect">OIDC redirect URI (add in Keycloak)</span>
+      <input type="text" id="oidc-redirect" readonly />
+      <small class="hint" data-i18n="ext_oidc_redirect_help">Copy this exact value into Keycloak → Clients → talos-extension → Valid redirect URIs.</small>
+    </label>
+
+    <label class="field">
       <span data-i18n="ext_language">Language</span>
       <select id="ui-language">
         <option value="auto" data-i18n="ext_lang_auto">Auto (browser)</option>

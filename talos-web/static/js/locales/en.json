@@ -66,6 +66,7 @@
   "footer_coded": "Coded with",
   "footer_by": "by",
   "password": "Password",
+  "secret_corrupted_hint": "Stored password looks corrupted (legacy KEEP bug). Edit this secret and set a new password.",
   "no_description": "No description.",
   "user": "User",
   "url": "URL",

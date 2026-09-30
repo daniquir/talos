@@ -7,10 +7,12 @@ import {
   setConfig,
 } from "../shared/api.js";
 import { applyDom, getPref, initI18n, setLangPref, t } from "../shared/i18n.js";
+import { getOidcRedirectUri } from "../shared/oidc.js";
 
 const serverUrlInput = document.getElementById("server-url");
 const oidcIssuerInput = document.getElementById("oidc-issuer");
 const oidcClientInput = document.getElementById("oidc-client");
+const oidcRedirectInput = document.getElementById("oidc-redirect");
 const persistSessionInput = document.getElementById("persist-session");
 const autoLockSelect = document.getElementById("auto-lock");
 const langSelect = document.getElementById("ui-language");
@@ -59,6 +61,15 @@ async function load() {
   serverUrlInput.value = cfg.serverUrl || "";
   oidcIssuerInput.value = cfg.oidcIssuer || "";
   oidcClientInput.value = cfg.oidcClientId || "talos-extension";
+  try {
+    oidcRedirectInput.value = getOidcRedirectUri();
+  } catch {
+    try {
+      oidcRedirectInput.value = chrome.identity.getRedirectURL();
+    } catch {
+      oidcRedirectInput.value = "";
+    }
+  }
   langSelect.value = await getPref();
   autoLockSelect.value = String(cfg.autoLockMinutes || 0);
 

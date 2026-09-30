@@ -177,6 +177,8 @@
       const offer = await send("CAPTURE_OFFER", {
         host: capture.host,
         username: capture.username,
+        password: capture.password,
+        url: capture.url,
       });
       if (offer.kind === "ignored") {
         pending = null;

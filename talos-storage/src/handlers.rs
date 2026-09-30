@@ -310,16 +310,15 @@ pub async fn match_secrets(
     let mut matches = Vec::new();
     for entry in crate::url_index::all_entries_in(&root) {
         let url_for_match = entry.url.clone().unwrap_or_default();
-        let path_hint = entry
-            .path
-            .split('/')
-            .last()
-            .unwrap_or("")
-            .to_string();
-
+        // Firefox import layout is `web/<host>/<account>` — title/leaf is the
+        // account name, not the site. Match URL, title, leaf, and every path segment.
         let matched = (!url_for_match.is_empty() && hosts_match(&host, &url_for_match))
-            || hosts_match(&host, &path_hint)
-            || hosts_match(&host, &entry.title);
+            || hosts_match(&host, &entry.title)
+            || entry
+                .path
+                .split('/')
+                .filter(|seg| !seg.is_empty())
+                .any(|seg| hosts_match(&host, seg));
 
         if matched {
             matches.push(json!({
@@ -505,6 +504,26 @@ pub async fn encrypt_and_save(headers: HeaderMap, Json(req): Json<ActionRequest>
         };
 
         let old_pass = full_text.split('\n').next().unwrap_or("");
+        // Secrets corrupted by the pre-1.2.1 KEEP path may literally store the
+        // marker (or other non-password garbage) as the first line. Refuse to
+        // re-preserve that — the user must set a real password explicitly.
+        if old_pass.is_empty()
+            || old_pass == "__TALOS_KEEP_SECRET__"
+            || old_pass == "__TALOS_HIDDEN_SECRET__"
+            || old_pass.starts_with("-----BEGIN")
+        {
+            log_audit_event(
+                "storage_save",
+                "failed",
+                "keep-secret: stored password looks corrupted — require explicit password",
+            );
+            return Ok((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "Stored password is missing or corrupted. Enter a new password to save."
+                })),
+            ));
+        }
         // Replace only the leading marker (password may contain the marker string by chance).
         if let Some(rest) = payload.strip_prefix("__TALOS_KEEP_SECRET__") {
             payload = format!("{}{}", old_pass, rest);

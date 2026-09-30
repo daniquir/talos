@@ -5,12 +5,14 @@
  */
 
 (() => {
-if (globalThis.__talosContentVersion === 8) return;
-globalThis.__talosContentVersion = 8;
+if (globalThis.__talosContentVersion === 9) return;
+globalThis.__talosContentVersion = 9;
 
 const HOST_ATTR = "data-talos-field";
 const ROOT_ID = "talos-inline-root";
 const BTN_SIZE = 22;
+/** Inputs narrower than this cannot host the icon without covering typed text. */
+const MIN_INPUT_WIDTH_FOR_ICON = BTN_SIZE + 28;
 
 function t(key, vars) {
   if (globalThis.TalosI18n?.t) return globalThis.TalosI18n.t(key, vars);
@@ -78,7 +80,9 @@ function queryInputs(root, selector) {
 }
 
 function findPasswordInputs(root = document) {
-  return queryInputs(root, 'input[type="password"]').filter(isVisible);
+  return queryInputs(root, 'input[type="password"]').filter(
+    (el) => isVisible(el) && !isOtpOrPinBox(el)
+  );
 }
 
 function isVisible(el) {
@@ -91,6 +95,53 @@ function isVisible(el) {
 
 function fieldHints(el) {
   return `${el.name || ""} ${el.id || ""} ${el.placeholder || ""} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("autocomplete") || ""}`.toLowerCase();
+}
+
+/**
+ * Split OTP / PIN digit boxes and other tiny fields where the Talos icon
+ * would cover the entire control (common on 6–8 single-char code UIs).
+ */
+function isOtpOrPinBox(el) {
+  if (!el) return false;
+
+  const ac = (el.autocomplete || "").toLowerCase();
+  if (ac.includes("one-time-code") || ac === "otp") return true;
+
+  const ml = typeof el.maxLength === "number" ? el.maxLength : -1;
+  // Classic per-digit OTP boxes (maxLength 1, sometimes 2).
+  if (ml > 0 && ml <= 2) return true;
+
+  const hints = fieldHints(el);
+  if (
+    /otp|totp|one.?time|2fa|mfa|verif(?:y|ication)?|sms.?code|auth.?code|passcode|pin.?code|\bdigit\b|\bdigits?\b/.test(
+      hints
+    )
+  ) {
+    return true;
+  }
+
+  const pattern = (el.getAttribute("pattern") || "").replace(/\s/g, "");
+  if (
+    pattern === "[0-9]" ||
+    pattern === "\\d" ||
+    pattern === "[0-9]{1}" ||
+    pattern === "\\d{1}" ||
+    /^\^?\[0-9\]\{1,2\}\$?$/.test(pattern) ||
+    /^\^?\\d\{1,2\}\$?$/.test(pattern)
+  ) {
+    return true;
+  }
+
+  const inputMode = (el.getAttribute("inputmode") || "").toLowerCase();
+  // Short numeric code field (single input of 4–8 digits), not a phone number.
+  if ((inputMode === "numeric" || inputMode === "tel") && ml >= 4 && ml <= 8) {
+    if (!/\b(phone|mobile|tel|telefono|telephone)\b/.test(hints)) return true;
+  }
+
+  const r = el.getBoundingClientRect();
+  if (r.width > 0 && r.width < MIN_INPUT_WIDTH_FOR_ICON) return true;
+
+  return false;
 }
 
 function isExcludedIdentityField(hints) {
@@ -126,6 +177,7 @@ function isLoginPageContext() {
  */
 function isUsernameLike(el, pageHasPassword) {
   if (!el || !isVisible(el)) return false;
+  if (isOtpOrPinBox(el)) return false;
   const type = (el.type || "text").toLowerCase();
   if (["password", "hidden", "submit", "button", "checkbox", "radio", "file", "range", "color", "search", "number", "date", "datetime-local", "month", "week", "time"].includes(type)) {
     return false;
@@ -458,7 +510,7 @@ function schedulePositions() {
 }
 
 function positionButton(input, btn, { reveal = false } = {}) {
-  if (!document.contains(input) || !isVisible(input)) {
+  if (!document.contains(input) || !isVisible(input) || isOtpOrPinBox(input)) {
     btn.style.visibility = "hidden";
     btn.classList.remove("ready");
     return;
@@ -466,6 +518,12 @@ function positionButton(input, btn, { reveal = false } = {}) {
   const r = input.getBoundingClientRect();
   // Layout not ready yet (0-size) — keep hidden and retry.
   if (r.width < 8 || r.height < 8) {
+    btn.classList.remove("ready");
+    return;
+  }
+  // Too narrow: icon would cover most of the control.
+  if (r.width < MIN_INPUT_WIDTH_FOR_ICON) {
+    btn.style.visibility = "hidden";
     btn.classList.remove("ready");
     return;
   }
@@ -497,6 +555,7 @@ function positionMenu(anchorInput) {
 
 function attachButton(fieldInput) {
   if (tracked.has(fieldInput)) return;
+  if (isOtpOrPinBox(fieldInput)) return;
   fieldInput.setAttribute(HOST_ATTR, "1");
   ensureUi();
 
@@ -512,7 +571,9 @@ function attachButton(fieldInput) {
 
   const prevPad = fieldInput.style.paddingRight;
   const computedPad = parseFloat(window.getComputedStyle(fieldInput).paddingRight) || 0;
-  if (computedPad < BTN_SIZE + 10) {
+  // Only reserve padding when the field is wide enough to keep typed text readable.
+  const fieldWidth = fieldInput.getBoundingClientRect().width;
+  if (fieldWidth >= MIN_INPUT_WIDTH_FOR_ICON && computedPad < BTN_SIZE + 10) {
     fieldInput.style.paddingRight = `${BTN_SIZE + 12}px`;
   }
   // Force layout after padding so the first measure is accurate.
