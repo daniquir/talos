@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-09-30
+
+Patch: password reveal toggle in the web secret viewer.
+
 ### Fixed
 - Web secret viewer: eye button toggles password visibility (press-and-hold raced with async decrypt and looked broken)
 
