@@ -4,7 +4,7 @@ How a version reaches Docker Hub, GitHub Releases, and (optionally) browser stor
 
 ## What a tag does
 
-Pushing `vX.Y.Z` (example: `v1.2.3`) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml):
+Pushing `vX.Y.Z` (example: `v1.2.4`) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml):
 
 | Step | Output |
 |------|--------|
@@ -19,32 +19,31 @@ Official image name: **`kandacloud/talos`** (single repository). The three layer
 
 ## Cut a release
 
-1. Merge the work into `main`.
-2. Ensure `CHANGELOG.md` has a `## [X.Y.Z] - YYYY-MM-DD` section (not only Unreleased).
-3. Align Cargo crate versions if needed (`talos-*/Cargo.toml`).
-4. Tag and push:
-   ```bash
-   git checkout main
-   git pull
-   git tag -a v1.2.3 -m "TALOS v1.2.3"
-   git push origin v1.2.3
-   ```
-5. Watch **Actions → TALOS Release**. When green, images are on Docker Hub.
+1. Merge feature/bugfix work into `main`.
+2. Open a `release/X.Y.Z` PR that:
+   - Adds `## [X.Y.Z] - YYYY-MM-DD` in `CHANGELOG.md`
+   - Sets Cargo crates + extension `manifest.json` (+ compose / docs examples) to `X.Y.Z`
+   - Uses commit title **`Release vX.Y.Z: …`** (squash-merge keeps that title on `main`)
+3. Merge the release PR (human). **Do not tag by hand.**
+4. [`.github/workflows/tag-release.yml`](../.github/workflows/tag-release.yml) creates annotated tag `vX.Y.Z` on that push to `main`.
+5. The tag runs [`.github/workflows/release.yml`](../.github/workflows/release.yml) → Hub / GitHub Release / optional stores. Watch **Actions**.
+
+Private deploy (outside this repo): GitHub **Settings → Webhooks** on Release events → your deploy hook; the worker waits for Hub tags.
 
 ## Deploy without building from source
 
 ```bash
 cp -n .env.prod.example .env.prod
-# set SHARED_SECRET, OIDC_*, TALOS_VERSION=1.2.3, TALOS_IMAGE=kandacloud/talos
+# set SHARED_SECRET, OIDC_*, TALOS_VERSION=1.2.4, TALOS_IMAGE=kandacloud/talos
 docker compose -f docker-compose.prod.yaml --env-file .env.prod pull
 docker compose -f docker-compose.prod.yaml --env-file .env.prod up -d --no-build
 ```
 
 Pulls:
 
-- `kandacloud/talos:1.2.3-web`
-- `kandacloud/talos:1.2.3-storage`
-- `kandacloud/talos:1.2.3-bunker`
+- `kandacloud/talos:1.2.4-web`
+- `kandacloud/talos:1.2.4-storage`
+- `kandacloud/talos:1.2.4-bunker`
 
 ## GitHub secrets & variables
 
@@ -88,14 +87,15 @@ AMO listing **talos-vault** is approved; enable `PUBLISH_FIREFOX` when you want 
 
 ```bash
 ./talos-extension/scripts/package.sh
-# → dist/talos-extension-v1.2.3.zip
+# → dist/talos-extension-v1.2.4.zip
 ```
 
-## Checklist before `v1.2.3`
+## Checklist before merging `release/1.2.4`
 
-- [ ] `main` contains auth hardening + extension/web UX fixes from this release
-- [ ] `CHANGELOG.md` has `[1.2.3]`
-- [ ] Cargo crates + extension manifest at `1.2.3`
+- [ ] `main` contains the fixes for this release
+- [ ] `CHANGELOG.md` has `[1.2.4]`
+- [ ] Cargo crates + extension manifest at `1.2.4`
+- [ ] Commit title is `Release v1.2.4: …` (auto-tag on merge)
 - [ ] Keycloak `talos-extension`: Firefox loopback `http://127.0.0.1/mozoauth2/<hash>/` (and/or `http://127.0.0.1/*`) on prod
-- [ ] Prod `.env.prod` / Vault: `TALOS_VERSION=1.2.3` after images publish
+- [ ] After Hub publish: prod Vault / `.env.prod` `TALOS_VERSION=1.2.4` (or deploy webhook)
 - [ ] Optional: `PUBLISH_FIREFOX=true` / `PUBLISH_CHROME=true` for store auto-submit

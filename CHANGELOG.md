@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-09-30
+
+Patch: timed password peek and fixed secret-field action layout.
+
 ### Fixed
 - Web secret viewer: eye shows a spinner while decrypting — click (or release during load) reveals for 1.5s then auto-hides; long-press peeks until release
 - Web secret viewer: copy/reveal actions sit in a fixed strip before the value so long passwords no longer shove the buttons
