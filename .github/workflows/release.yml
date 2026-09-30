@@ -24,6 +24,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v1.2.4). Leave empty to use the ref this workflow runs on."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -34,16 +40,25 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
       docker_image: ${{ steps.img.outputs.image }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # workflow_dispatch from tag-release may run on main with inputs.tag=vX.Y.Z
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Extract version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          RAW="${{ inputs.tag }}"
+          if [[ -z "$RAW" ]]; then RAW="${GITHUB_REF_NAME}"; fi
+          TAG="${RAW}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve Docker image name
         id: img
@@ -94,11 +109,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
           name: v${{ steps.version.outputs.version }}
           body_path: ${{ steps.notes.outputs.file }}
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
           generate_release_notes: true
 
   build-and-push:
@@ -176,7 +191,7 @@ jobs:
       - name: Upload extension to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.github-release.outputs.tag }}
           files: |
             dist/talos-extension-v${{ needs.github-release.outputs.version }}.zip
 

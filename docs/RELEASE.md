@@ -25,8 +25,8 @@ Official image name: **`kandacloud/talos`** (single repository). The three layer
    - Sets Cargo crates + extension `manifest.json` (+ compose / docs examples) to `X.Y.Z`
    - Uses commit title **`Release vX.Y.Z: …`** (squash-merge keeps that title on `main`)
 3. Merge the release PR (human). **Do not tag by hand.**
-4. [`.github/workflows/tag-release.yml`](../.github/workflows/tag-release.yml) creates annotated tag `vX.Y.Z` on that push to `main`.
-5. The tag runs [`.github/workflows/release.yml`](../.github/workflows/release.yml) → Hub / GitHub Release / optional stores. Watch **Actions**.
+4. [`.github/workflows/tag-release.yml`](../.github/workflows/tag-release.yml) creates annotated tag `vX.Y.Z` and **dispatches** [`.github/workflows/release.yml`](../.github/workflows/release.yml) (`GITHUB_TOKEN` cannot trigger other workflows by pushing the tag alone).
+5. `release.yml` → Hub / GitHub Release / optional stores. Watch **Actions**.
 
 Private deploy (outside this repo): GitHub **Settings → Webhooks** on Release events → your deploy hook; the worker waits for Hub tags.
 
