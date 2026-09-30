@@ -1,8 +1,12 @@
 name: Tag release on merge
 
 # When a release PR lands on main (commit title "Release vX.Y.Z: …", or a
-# merge that bumps talos-web Cargo version), create annotated tag vX.Y.Z.
-# That tag triggers release.yml (Hub / GitHub Release / stores).
+# merge that bumps talos-web Cargo version), create annotated tag vX.Y.Z and
+# dispatch release.yml.
+#
+# Note: pushing a tag with GITHUB_TOKEN does NOT trigger other workflows
+# (GitHub security rule). After tagging we explicitly workflow_dispatch
+# release.yml so Hub / GitHub Release still run.
 
 on:
   push:
@@ -10,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   tag:
@@ -22,8 +27,10 @@ jobs:
           fetch-depth: 0
 
       - name: Create tag if this is a release
+        id: tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="$(sed -n 's/^version = "\([0-9][0-9.]*\)"/\1/p' talos-web/Cargo.toml | head -1)"
@@ -48,11 +55,15 @@ jobs:
 
           if [[ "$is_release_msg" != true && "$version_bumped" != true ]]; then
             echo "Not a release commit; skip tagging."
+            echo "created=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            echo "Tag ${TAG} already exists; skip."
+            echo "Tag ${TAG} already exists; skip create, still ensure release runs."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -72,3 +83,17 @@ jobs:
           git tag -a "${TAG}" -m "TALOS ${TAG}"
           git push origin "refs/tags/${TAG}"
           echo "Created and pushed ${TAG}"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch TALOS Release
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          # Run workflow file from main (has workflow_dispatch); build the tagged commit via inputs.tag
+          gh workflow run "TALOS Release" --ref main -f "tag=${TAG}"
+          echo "Dispatched TALOS Release for ${TAG}"
