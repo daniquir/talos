@@ -505,7 +505,8 @@ export const UI = {
 
         const fetchSecret = async () => {
             const fullData = await API.decrypt(path, true);
-            return fullData.split('\n')[0];
+            const text = typeof fullData === 'string' ? fullData : String(fullData ?? '');
+            return text.split('\n')[0];
         };
 
         const maskPassword = () => {
@@ -553,26 +554,52 @@ export const UI = {
             lucide.createIcons();
         };
 
-        const showBtn = makeActionBtn('eye', t('password'), null);
-        showBtn.onmousedown = async (e) => {
-            e.preventDefault();
-            const secret = await fetchSecret();
-            renderRevealed(secret);
+        const setEyeIcon = (revealed) => {
+            showBtn.innerHTML = `<i data-lucide="${revealed ? 'eye-off' : 'eye'}" class="w-3.5 h-3.5"></i>`;
+            lucide.createIcons();
         };
-        showBtn.onmouseup = maskPassword;
-        showBtn.onmouseleave = maskPassword;
-        // Touch / keyboard: brief reveal
-        showBtn.ontouchstart = async (e) => {
+
+        // Click toggles reveal. The old press-and-hold used async decrypt on
+        // mousedown + immediate mask on mouseup, so the password never stayed
+        // visible (and a fast click looked like a no-op).
+        let revealed = false;
+        let revealBusy = false;
+        const showBtn = makeActionBtn('eye', t('password'), async (e) => {
             e.preventDefault();
-            const secret = await fetchSecret();
-            renderRevealed(secret);
-        };
-        showBtn.ontouchend = maskPassword;
+            e.stopPropagation();
+            if (revealBusy) return;
+            revealBusy = true;
+            showBtn.disabled = true;
+            try {
+                if (revealed) {
+                    maskPassword();
+                    revealed = false;
+                    setEyeIcon(false);
+                    return;
+                }
+                const secret = await fetchSecret();
+                renderRevealed(secret);
+                revealed = true;
+                setEyeIcon(true);
+            } catch (err) {
+                maskPassword();
+                revealed = false;
+                setEyeIcon(false);
+                this.showNotification(t('notif_error', { error: err.message || String(err) }), 'error');
+            } finally {
+                revealBusy = false;
+                showBtn.disabled = false;
+            }
+        });
 
         const copyBtn = makeActionBtn('copy', t('copy_all'), async () => {
-            const secret = await fetchSecret();
-            await navigator.clipboard.writeText(secret);
-            flashOk(copyBtn, 'copy');
+            try {
+                const secret = await fetchSecret();
+                await navigator.clipboard.writeText(secret);
+                flashOk(copyBtn, 'copy');
+            } catch (err) {
+                this.showNotification(t('notif_copy_fail', { error: err.message || String(err) }), 'error');
+            }
         });
 
         passButtons.appendChild(showBtn);

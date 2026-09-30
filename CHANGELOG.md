@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Web secret viewer: eye button toggles password visibility (press-and-hold raced with async decrypt and looked broken)
+
 ## [1.2.2] - 2026-09-30
 
 Patch release: auth hardening from 1.2.1 plus extension/web UX fixes (OIDC Firefox unlock, capture nag, vault search, KEEP corruption recovery, stuck save button). Deploy **`kandacloud/talos:1.2.2-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.2`. Firefox extension: register Keycloak redirect `http://127.0.0.1/mozoauth2/<hash>/` (see [docs/PRODUCTION.md](docs/PRODUCTION.md)).
