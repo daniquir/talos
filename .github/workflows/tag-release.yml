@@ -1,0 +1,74 @@
+name: Tag release on merge
+
+# When a release PR lands on main (commit title "Release vX.Y.Z: …", or a
+# merge that bumps talos-web Cargo version), create annotated tag vX.Y.Z.
+# That tag triggers release.yml (Hub / GitHub Release / stores).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create version tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create tag if this is a release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^version = "\([0-9][0-9.]*\)"/\1/p' talos-web/Cargo.toml | head -1)"
+          if [[ -z "$VERSION" ]]; then
+            echo "Could not read version from talos-web/Cargo.toml"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          MSG="$(git log -1 --pretty=%B)"
+
+          is_release_msg=false
+          if echo "$MSG" | grep -qE '^Release v[0-9]+\.[0-9]+\.[0-9]+'; then
+            is_release_msg=true
+          fi
+
+          version_bumped=false
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            if git diff HEAD~1 HEAD -- talos-web/Cargo.toml | grep -qE '^\+version = "'; then
+              version_bumped=true
+            fi
+          fi
+
+          if [[ "$is_release_msg" != true && "$version_bumped" != true ]]; then
+            echo "Not a release commit; skip tagging."
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists; skip."
+            exit 0
+          fi
+
+          if ! grep -qE "^## \[${VERSION}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md missing ## [${VERSION}] section"
+            exit 1
+          fi
+
+          MSG_VER="$(echo "$MSG" | sed -n 's/^Release v\([0-9.]*\).*/\1/p' | head -1)"
+          if [[ -n "$MSG_VER" && "$MSG_VER" != "$VERSION" ]]; then
+            echo "Commit title version (${MSG_VER}) != Cargo (${VERSION})"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "TALOS ${TAG}"
+          git push origin "refs/tags/${TAG}"
+          echo "Created and pushed ${TAG}"
