@@ -4,7 +4,7 @@ How a version reaches Docker Hub, GitHub Releases, and (optionally) browser stor
 
 ## What a tag does
 
-Pushing `vX.Y.Z` (example: `v1.2.5`) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml):
+Pushing `vX.Y.Z` (example: `v1.2.6`) runs [`.github/workflows/release.yml`](../.github/workflows/release.yml):
 
 | Step | Output |
 |------|--------|
@@ -34,16 +34,16 @@ Private deploy (outside this repo): GitHub **Settings → Webhooks** on Release 
 
 ```bash
 cp -n .env.prod.example .env.prod
-# set SHARED_SECRET, OIDC_*, TALOS_VERSION=1.2.5, TALOS_IMAGE=kandacloud/talos
+# set SHARED_SECRET, OIDC_*, TALOS_VERSION=1.2.6, TALOS_IMAGE=kandacloud/talos
 docker compose -f docker-compose.prod.yaml --env-file .env.prod pull
 docker compose -f docker-compose.prod.yaml --env-file .env.prod up -d --no-build
 ```
 
 Pulls:
 
-- `kandacloud/talos:1.2.5-web`
-- `kandacloud/talos:1.2.5-storage`
-- `kandacloud/talos:1.2.5-bunker`
+- `kandacloud/talos:1.2.6-web`
+- `kandacloud/talos:1.2.6-storage`
+- `kandacloud/talos:1.2.6-bunker`
 
 ## GitHub secrets & variables
 
@@ -87,15 +87,15 @@ AMO listing **talos-vault** is approved; enable `PUBLISH_FIREFOX` when you want 
 
 ```bash
 ./talos-extension/scripts/package.sh
-# → dist/talos-extension-v1.2.5.zip
+# → dist/talos-extension-v1.2.6.zip
 ```
 
-## Checklist before merging `release/1.2.5`
+## Checklist before merging `release/1.2.6`
 
 - [ ] `main` contains the fixes for this release
-- [ ] `CHANGELOG.md` has `[1.2.5]`
-- [ ] Cargo crates + extension manifest at `1.2.5`
-- [ ] Commit title is `Release v1.2.5: …` (auto-tag on merge)
+- [ ] `CHANGELOG.md` has `[1.2.6]`
+- [ ] Cargo crates + extension manifest at `1.2.6`
+- [ ] Commit title is `Release v1.2.6: …` (auto-tag on merge)
 - [ ] Keycloak `talos-extension`: Valid redirect URIs (loopback / chromiumapp / AMO); **Web Origins empty** (code exchange is server-side)
-- [ ] After Hub publish: prod Vault / `.env.prod` `TALOS_VERSION=1.2.5` (or deploy webhook)
+- [ ] After Hub publish: prod Vault / `.env.prod` `TALOS_VERSION=1.2.6` (or deploy webhook)
 - [ ] Optional: `PUBLISH_FIREFOX=true` / `PUBLISH_CHROME=true` for store auto-submit
