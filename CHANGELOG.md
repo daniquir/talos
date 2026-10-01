@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Bunker encrypt no longer base64-decodes plaintext. Passwords that are valid Base64 (Vault unseal keys, JWTs, etc.) were stored as binary and shown as UTF-8 replacement characters after decrypt. Decrypt still accepts base64-encoded `.gpg` bytes from storage.
+- Web secret viewer: multi-value passwords space-separated (e.g. several Vault unseal shares on one line) are listed with per-value copy again; quoted CSV still works. Passphrases with spaces are not split.
+- Web secret editor: secret field is a textarea; one token per line collapses to a single pass-file line on save.
+
 ## [1.2.5] - 2026-10-01
 
 Patch: extension OIDC unlock without Keycloak CORS / `Invalid origin`. Deploy **`kandacloud/talos:1.2.5-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.5`. Load the matching **talos-vault** package (or unpacked `talos-extension/`). Keycloak client `talos-extension`: keep **Web Origins empty** (do not use `*`).

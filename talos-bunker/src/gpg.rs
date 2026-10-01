@@ -52,6 +52,50 @@ fn sign_response(result: &str) -> String {
     hex::encode(mac.finalize().into_bytes())
 }
 
+/// Wire bytes for gpg stdin.
+///
+/// - `encrypt`: always the UTF-8 plaintext (passwords may *look* like base64).
+/// - `decrypt`: prefer base64 decode (storage encodes `.gpg` files); fall back to raw
+///   bytes for ASCII-armor round-trips (unlock canary).
+fn decode_gpg_payload(mode: &str, input: &str) -> Vec<u8> {
+    if mode == "encrypt" {
+        return input.as_bytes().to_vec();
+    }
+    match general_purpose::STANDARD.decode(input) {
+        Ok(decoded) => decoded,
+        Err(_) => input.as_bytes().to_vec(),
+    }
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::decode_gpg_payload;
+    use base64::{engine::general_purpose, Engine as _};
+
+    #[test]
+    fn encrypt_keeps_base64_looking_password_as_text() {
+        // 32 random bytes as standard base64 — same shape as a Vault Shamir share.
+        let password = general_purpose::STANDARD.encode([0u8; 32]);
+        let out = decode_gpg_payload("encrypt", &password);
+        assert_eq!(out, password.as_bytes());
+        // Would be 32 binary zeros if we wrongly base64-decoded:
+        assert_ne!(out, vec![0u8; 32]);
+    }
+
+    #[test]
+    fn decrypt_accepts_base64_wire_encoding() {
+        let raw = b"-----BEGIN PGP MESSAGE-----\npayload\n-----END PGP MESSAGE-----";
+        let wire = general_purpose::STANDARD.encode(raw);
+        assert_eq!(decode_gpg_payload("decrypt", &wire), raw);
+    }
+
+    #[test]
+    fn decrypt_falls_back_to_raw_armor() {
+        let armor = "-----BEGIN PGP MESSAGE-----\nok\n-----END PGP MESSAGE-----";
+        assert_eq!(decode_gpg_payload("decrypt", armor), armor.as_bytes());
+    }
+}
+
 fn authorize(headers: &HeaderMap) -> bool {
     let shared_secret = env::var("SHARED_SECRET").unwrap_or_default();
     match headers.get("X-Talos-Auth") {
@@ -364,10 +408,11 @@ pub async fn process_gpg(State(_state): State<AppState>, headers: HeaderMap, Jso
             };
 
             let input = req.payload;
-            let decoded_input = match general_purpose::STANDARD.decode(&input) {
-                Ok(decoded) => decoded,
-                Err(_) => input.into_bytes(),
-            };
+            // encrypt: payload is UTF-8 plaintext from storage — never treat as base64.
+            // A Vault unseal key / JWT / any base64-looking password would otherwise be
+            // decoded to binary, re-encrypted, and shown as � after decrypt.
+            // decrypt: storage sends base64(.gpg bytes); unlock canary may send armor text.
+            let decoded_input = decode_gpg_payload(req.mode.as_str(), &input);
 
             let passphrase_file = format!(
                 "/tmp/gpg_passphrase_{}",
