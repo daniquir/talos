@@ -336,7 +336,8 @@ export const UI = {
     },
 
     getFormData() {
-        const pass = this.elements.entrySecret.value;
+        const rawPass = this.elements.entrySecret.value;
+        const pass = this.normalizeSecretField(rawPass);
         const user = this.elements.entryUser.value;
         const url = this.elements.entryUrl.value;
         const desc = this.elements.entryDesc.value;
@@ -389,16 +390,56 @@ export const UI = {
         }
     },
 
-    /** Split a stored secret into displayable values without changing the stored form. */
+    /** Token-shaped secret (Vault unseal / JWT / hex) — not a passphrase with spaces. */
+    looksLikeSecretToken(value) {
+        if (!value || value.length < 20) return false;
+        if (/^[A-Za-z0-9+/=_-]+$/.test(value)) return true;
+        if (/^[0-9a-fA-F]+$/.test(value) && value.length >= 32) return true;
+        // JWT-ish: header.payload.sig
+        if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) return true;
+        return false;
+    },
+
+    /**
+     * Split a stored password (first line of the pass file) into displayable values.
+     * Does not rewrite storage. Supported on one line:
+     * - quoted CSV: "a","b","c"
+     * - whitespace-separated tokens (Vault shares, etc.) when every part looks like a token
+     * - otherwise a single value (passphrases with spaces stay intact)
+     */
     splitSecretValues(secret) {
         if (!secret) return [];
-        if (secret.includes('\n')) {
-            return secret.split('\n').map(s => s.trim()).filter(Boolean);
-        }
+        const trimmed = secret.trim();
+        if (!trimmed) return [];
+
         // Quoted CSV: "a","b","c" or 'a','b'
-        const quoted = [...secret.matchAll(/"([^"]*)"|'([^']*)'/g)].map(m => m[1] ?? m[2]);
+        const quoted = [...trimmed.matchAll(/"([^"]*)"|'([^']*)'/g)].map(m => m[1] ?? m[2]);
         if (quoted.length > 1) return quoted;
-        return [secret];
+
+        // Space / tab separated token list (common for Shamir shares pasted on one line).
+        // Require ≥2 parts and every part token-shaped so "correct horse battery staple" stays one value.
+        if (/\s/.test(trimmed)) {
+            const parts = trimmed.split(/\s+/).filter(Boolean);
+            if (parts.length > 1 && parts.every((p) => this.looksLikeSecretToken(p))) {
+                return parts;
+            }
+        }
+
+        return [trimmed];
+    },
+
+    /**
+     * Collapse a multi-line secret field into the pass-file first line.
+     * One token per line → space-separated single line (so User:/URL: metadata stay valid).
+     */
+    normalizeSecretField(raw) {
+        if (!raw) return '';
+        const lines = raw.split(/\n/).map((s) => s.trim()).filter(Boolean);
+        if (lines.length > 1 && lines.every((l) => this.looksLikeSecretToken(l))) {
+            return lines.join(' ');
+        }
+        // Classic pass: only the first line is the password.
+        return lines[0] || raw.split('\n')[0] || '';
     },
 
     renderSecretView(path, text) {
@@ -695,7 +736,9 @@ export const UI = {
         const copyBtn = makeActionBtn('copy', t('copy_all'), async () => {
             try {
                 const secret = await fetchSecret();
-                await navigator.clipboard.writeText(secret);
+                const values = this.splitSecretValues(secret);
+                const clip = values.length > 1 ? values.join('\n') : secret;
+                await navigator.clipboard.writeText(clip);
                 flashOk(copyBtn, 'copy');
             } catch (err) {
                 this.showNotification(t('notif_copy_fail', { error: err.message || String(err) }), 'error');
