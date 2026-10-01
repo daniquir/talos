@@ -116,7 +116,7 @@ Stable gecko id: **`talos@daniquir`** (do not change after the first listing).
 | Endpoint | Purpose |
 |----------|---------|
 | `POST /api/auth/token` | Unseal + issue Bearer token (15m) — legacy / non-OIDC |
-| `POST /api/auth/token/oidc` | OIDC id_token (+ vault key in strict) → Bearer |
+| `POST /api/auth/token/oidc` | OIDC code (+ vault key in strict) → Bearer; server exchanges with Keycloak |
 | `GET /api/match?host=` | Authenticated URL-index match |
 | `POST /api/match/reindex` | Rebuild index |
 | `GET /api/tree` | Vault tree |

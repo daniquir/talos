@@ -18,7 +18,8 @@ use crate::state::{AppState, RateLimiter, RateLimitEntry};
 use crate::settings::load_settings;
 use crate::handlers::log_audit;
 use crate::oidc::{
-    custody_mode, exchange_code, pkce_challenge, random_string, validate_id_token,
+    custody_mode, exchange_code, exchange_code_public, is_allowed_extension_redirect,
+    pkce_challenge, random_string, validate_id_token,
 };
 use crate::user_proxy::{multiuser_enabled, user_headers};
 
@@ -388,10 +389,17 @@ pub async fn issue_token(
 #[derive(Deserialize)]
 pub struct ExtTokenRequest {
     pub key: Option<String>,
+    /// Legacy: extension exchanges code with Keycloak itself and sends id_token.
     pub id_token: Option<String>,
+    /// Preferred: authorization code; talos-web exchanges with Keycloak (no extension CORS).
+    pub code: Option<String>,
+    pub code_verifier: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub client_id: Option<String>,
 }
 
-/// Extension: exchange OIDC id_token (+ optional vault key in strict mode) for Bearer.
+/// Extension: OIDC (+ optional vault key in strict mode) → Bearer.
+/// Accepts either `id_token` or `{code, code_verifier, redirect_uri, client_id}`.
 pub async fn issue_token_oidc(
     State(state): State<AppState>,
     session: Session,
@@ -402,11 +410,68 @@ pub async fn issue_token_oidc(
     if !state.oidc.enabled {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "OIDC disabled"})));
     }
-    let id_token = match payload.id_token.as_deref() {
-        Some(t) => t,
-        None => return (StatusCode::BAD_REQUEST, Json(json!({"error": "id_token required"}))),
+    let ip = client_ip(addr, &headers);
+    if !check_rate_limit(ip, &state.rate_limiter) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "Too many login attempts. Please wait 60 seconds."})),
+        );
+    }
+
+    let id_token = if let Some(t) = payload.id_token.as_deref().filter(|s| !s.is_empty()) {
+        t.to_string()
+    } else {
+        let code = match payload.code.as_deref().filter(|s| !s.is_empty()) {
+            Some(c) => c,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "id_token or code required"})),
+                );
+            }
+        };
+        let verifier = match payload.code_verifier.as_deref().filter(|s| !s.is_empty()) {
+            Some(v) => v,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "code_verifier required"})),
+                );
+            }
+        };
+        let redirect_uri = match payload.redirect_uri.as_deref().filter(|s| !s.is_empty()) {
+            Some(u) => u,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "redirect_uri required"})),
+                );
+            }
+        };
+        if !is_allowed_extension_redirect(redirect_uri) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "redirect_uri not allowed"})),
+            );
+        }
+        let client_id = payload
+            .client_id
+            .as_deref()
+            .unwrap_or("talos-extension")
+            .trim();
+        if client_id.is_empty() || !state.oidc.audiences.iter().any(|a| a == client_id) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "client_id not allowed"})),
+            );
+        }
+        match exchange_code_public(&state.oidc, client_id, redirect_uri, code, verifier).await {
+            Ok(t) => t,
+            Err(e) => return (StatusCode::UNAUTHORIZED, Json(json!({"error": e}))),
+        }
     };
-    let claims = match validate_id_token(&state.oidc, &state.jwks, id_token).await {
+
+    let claims = match validate_id_token(&state.oidc, &state.jwks, &id_token).await {
         Ok(c) => c,
         Err(e) => return (StatusCode::UNAUTHORIZED, Json(json!({"error": e}))),
     };
@@ -429,7 +494,12 @@ pub async fn issue_token_oidc(
     } else {
         let key = match payload.key.as_deref() {
             Some(k) if !k.is_empty() => k,
-            _ => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Vault passphrase required"}))),
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": "Vault passphrase required"})),
+                );
+            }
         };
         if unlock_with_key(key, Some(&sub)).await.is_ok() {
             unlocked = true;
@@ -441,17 +511,31 @@ pub async fn issue_token_oidc(
     }
 
     if !unlocked {
-        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Vault unlock failed"})));
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Vault unlock failed"})),
+        );
     }
 
     let access_token = state.issue_token(Some(sub.clone()), true);
-    log_audit(&state, &session, Some(addr.ip()), headers.get(header::USER_AGENT), "TOKEN_ISSUED_OIDC", &sub).await;
-    (StatusCode::OK, Json(json!({
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "expires_in": crate::state::API_TOKEN_TTL.as_secs(),
-        "user_sub": sub
-    })))
+    log_audit(
+        &state,
+        &session,
+        Some(addr.ip()),
+        headers.get(header::USER_AGENT),
+        "TOKEN_ISSUED_OIDC",
+        &sub,
+    )
+    .await;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": crate::state::API_TOKEN_TTL.as_secs(),
+            "user_sub": sub
+        })),
+    )
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {

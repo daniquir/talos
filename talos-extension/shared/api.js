@@ -194,13 +194,20 @@ export const API = {
       body: { key: masterKey },
     });
   },
-  issueTokenOidc(idToken, masterKey) {
+  issueTokenOidc(auth, masterKey) {
+    const body = { key: masterKey || null };
+    if (auth && typeof auth === "object" && auth.code) {
+      body.code = auth.code;
+      body.code_verifier = auth.codeVerifier;
+      body.redirect_uri = auth.redirectUri;
+      body.client_id = auth.clientId;
+    } else {
+      // Legacy: raw id_token string (pre code-exchange servers)
+      body.id_token = auth;
+    }
     return request("/api/auth/token/oidc", {
       method: "POST",
-      body: {
-        id_token: idToken,
-        key: masterKey || null,
-      },
+      body,
     });
   },
   authStatus(token) {

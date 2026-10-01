@@ -1,4 +1,8 @@
-/** OIDC PKCE helper for the extension (Keycloak). */
+/** OIDC PKCE helper for the extension (Keycloak).
+ *
+ * Browser identity flow only; the authorization *code* is exchanged by talos-web
+ * so Keycloak never sees chrome-extension:// / moz-extension:// Origins (no Web Origins *).
+ */
 
 function b64url(buf) {
   const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf;
@@ -67,17 +71,25 @@ function explainOidcFailure(raw, { issuer, clientId, redirectUri }) {
       `OIDC redirect_uri rejected. Register this exact URI on client "${clientId}":\n${redirectUri}`
     );
   }
+  if (lower.includes("invalid origin") || lower === "invalid_origin") {
+    return (
+      `OIDC failed (Invalid origin). Update Talos server (≥ code-exchange unlock) ` +
+      `so the extension does not POST to Keycloak from chrome-extension:// / moz-extension://. ` +
+      `Do not set Keycloak Web Origins to *. Issuer: ${issuer}`
+    );
+  }
   if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
     return (
-      `Cannot reach Keycloak token endpoint (${issuer}). ` +
-      `Grant the extension host permission for that origin and check the issuer URL.`
+      `Cannot reach Talos or Keycloak (${issuer}). ` +
+      `Grant the extension host permission and check server / issuer URLs.`
     );
   }
   return `OIDC login failed: ${msg}`;
 }
 
 /**
- * Interactive OIDC login; returns id_token from Keycloak token endpoint.
+ * Interactive OIDC authorize; returns authorization code + PKCE verifier.
+ * Token exchange is done by talos-web (`POST /api/auth/token/oidc`).
  */
 export async function loginOidc({ issuer, clientId }) {
   if (!issuer || !clientId) {
@@ -123,31 +135,10 @@ export async function loginOidc({ issuer, clientId }) {
   if (!code) throw new Error("Missing OIDC code");
   if (st !== state) throw new Error("OIDC state mismatch");
 
-  const tokenUrl = `${issuerBase}/protocol/openid-connect/token`;
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri,
-    client_id: clientId,
-    code_verifier: verifier,
-  });
-  const res = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(
-      explainOidcFailure(
-        data.error_description || data.error || `OIDC token HTTP ${res.status}`,
-        { issuer: issuerBase, clientId, redirectUri }
-      )
-    );
-  }
-  if (!data.id_token) throw new Error("Missing id_token");
   return {
-    idToken: data.id_token,
-    accessToken: data.access_token || null,
+    code,
+    codeVerifier: verifier,
+    redirectUri,
+    clientId,
   };
 }

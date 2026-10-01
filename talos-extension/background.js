@@ -336,7 +336,7 @@ async function handleMessage(message, sender) {
           if (status.custody_mode !== "convenience" && !masterKey) {
             throw new Error("Vault passphrase required");
           }
-          data = await API.issueTokenOidc(oidc.idToken, masterKey || undefined);
+          data = await API.issueTokenOidc(oidc, masterKey || undefined);
         } else {
           if (!masterKey) throw new Error("Master key required");
           data = await API.issueToken(masterKey);

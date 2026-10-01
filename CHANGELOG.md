@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Extension OIDC unlock: authorization code is exchanged by **talos-web** (not the browser), so Keycloak Web Origins stay closed — no `*` and no per-profile `moz-extension://` allowlist
+- Extension OIDC: clearer error if an old build still hits Keycloak with `Invalid origin`
+
 ## [1.2.4] - 2026-09-30
 
 Patch: timed password peek and fixed secret-field action layout.
