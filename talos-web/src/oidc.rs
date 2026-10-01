@@ -147,14 +147,49 @@ pub async fn exchange_code(
     code: &str,
     code_verifier: &str,
 ) -> Result<(String, IdClaims), String> {
+    exchange_code_with(
+        cfg,
+        &cfg.client_id,
+        Some(cfg.client_secret.as_str()),
+        &cfg.redirect_uri,
+        code,
+        code_verifier,
+    )
+    .await
+}
+
+/// Public-client (extension) authorization-code exchange. No `Origin` header —
+/// avoids Keycloak Web Origins CORS for `chrome-extension://` / `moz-extension://`.
+pub async fn exchange_code_public(
+    cfg: &OidcConfig,
+    client_id: &str,
+    redirect_uri: &str,
+    code: &str,
+    code_verifier: &str,
+) -> Result<String, String> {
+    let (id_token, _) =
+        exchange_code_with(cfg, client_id, None, redirect_uri, code, code_verifier).await?;
+    Ok(id_token)
+}
+
+async fn exchange_code_with(
+    cfg: &OidcConfig,
+    client_id: &str,
+    client_secret: Option<&str>,
+    redirect_uri: &str,
+    code: &str,
+    code_verifier: &str,
+) -> Result<(String, IdClaims), String> {
     let client = reqwest::Client::new();
     let mut form = HashMap::new();
     form.insert("grant_type", "authorization_code");
     form.insert("code", code);
-    form.insert("redirect_uri", cfg.redirect_uri.as_str());
-    form.insert("client_id", cfg.client_id.as_str());
-    form.insert("client_secret", cfg.client_secret.as_str());
+    form.insert("redirect_uri", redirect_uri);
+    form.insert("client_id", client_id);
     form.insert("code_verifier", code_verifier);
+    if let Some(secret) = client_secret.filter(|s| !s.is_empty()) {
+        form.insert("client_secret", secret);
+    }
 
     let res = client
         .post(cfg.token_url())
@@ -171,12 +206,35 @@ pub async fn exchange_code(
         .as_str()
         .ok_or("missing id_token")?
         .to_string();
-    Ok((id_token, IdClaims {
-        sub: String::new(),
-        email: None,
-        preferred_username: None,
-        realm_access: None,
-    }))
+    Ok((
+        id_token,
+        IdClaims {
+            sub: String::new(),
+            email: None,
+            preferred_username: None,
+            realm_access: None,
+        },
+    ))
+}
+
+/// Allowed OIDC redirect URIs for the browser extension (`identity.launchWebAuthFlow`).
+pub fn is_allowed_extension_redirect(uri: &str) -> bool {
+    let Ok(u) = url::Url::parse(uri) else {
+        return false;
+    };
+    let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+    match u.scheme() {
+        "http" if host == "127.0.0.1" || host == "localhost" || host == "::1" => {
+            // Firefox AMO loopback: http://127.0.0.1/mozoauth2/<hash>/
+            u.path().starts_with("/mozoauth2/") || u.path() == "/" || u.path().is_empty()
+        }
+        "https" => {
+            host.ends_with(".chromiumapp.org")
+                || host.ends_with(".extensions.allizom.org")
+                || host.ends_with(".extensions.mozilla.org")
+        }
+        _ => false,
+    }
 }
 
 pub async fn validate_id_token(

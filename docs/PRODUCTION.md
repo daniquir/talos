@@ -43,7 +43,7 @@ Admin console: `https://dev.kanda.cloud:8483` (realm `master` to administer).
    - `http://127.0.0.1/*` / `http://localhost/*` (dev + **Firefox AMO loopback** `http://127.0.0.1/mozoauth2/<hash>/`)
    - `https://*.chromiumapp.org/*` (Chrome / Edge)
    - `https://*.extensions.allizom.org/*` (optional fallback; Firefox often fails this host with `not_found`)
-   - Web Origins: `*` (token exchange from the extension)
+   - **Web Origins: leave empty** (or only values you intentionally need). The extension does **not** call Keycloak’s token endpoint; `talos-web` exchanges the authorization code server-side. Do **not** set `*` — Firefox `moz-extension://` UUIDs are per-profile and cannot be allowlisted.
 6. Create **your** user (not `dev`). Roles: `talos-user` (and `talos-admin` only if you want operator unseal later). Turn on OTP if you already use Authenticator.
 
 Never use realm `master` for the vault.

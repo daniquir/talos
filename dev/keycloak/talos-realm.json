@@ -70,7 +70,7 @@
         "https://*.chromiumapp.org/*",
         "https://*.extensions.allizom.org/*"
       ],
-      "webOrigins": ["*"],
+      "webOrigins": [],
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "protocol": "openid-connect",

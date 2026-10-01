@@ -48,8 +48,8 @@ Ensure `data-dev/bunker-gnupg-users` is owned by uid `1000` (`./dev/scripts/dev-
 
 1. Open Talos → **Sign in with Keycloak**.
 2. Create / unlock vault with a passphrase (your personal GPG passphrase).
-3. Extension: set Server URL + OIDC issuer `http://localhost:8080/realms/talos`, client `talos-extension`. Unlock runs Keycloak PKCE then vault passphrase (strict).
-4. Production Firefox (AMO): Keycloak Valid redirect URIs must include `https://*.extensions.allizom.org/*` (or the exact identity redirect). Server accepts id_token audience `talos-extension` as well as `talos-web` (`OIDC_AUDIENCES`).
+3. Extension: set Server URL + OIDC issuer `http://localhost:8080/realms/talos`, client `talos-extension`. Unlock runs Keycloak PKCE in the browser, then **talos-web** exchanges the code (Keycloak Web Origins stay empty / closed).
+4. Production Firefox (AMO): Keycloak Valid redirect URIs must include `https://*.extensions.allizom.org/*` (or the exact identity redirect) **and** loopback `http://127.0.0.1/*`. Server accepts id_token audience `talos-extension` as well as `talos-web` (`OIDC_AUDIENCES`).
 
 ### Operator unseal (convenience only)
 
