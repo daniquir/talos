@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-10-01
+
+Patch: extension OIDC unlock without Keycloak CORS / `Invalid origin`. Deploy **`kandacloud/talos:1.2.5-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.5`. Load the matching **talos-vault** package (or unpacked `talos-extension/`). Keycloak client `talos-extension`: keep **Web Origins empty** (do not use `*`).
+
 ### Fixed
 - Extension OIDC unlock: authorization code is exchanged by **talos-web** (not the browser), so Keycloak Web Origins stay closed — no `*` and no per-profile `moz-extension://` allowlist
 - Extension OIDC: clearer error if an old build still hits Keycloak with `Invalid origin`
