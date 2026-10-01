@@ -23,7 +23,7 @@ Do **not** put HashiCorp unseal keys in here until you have logged in once and t
 2. Wildcard TLS already on Apache (`kanda-cloud.crt` / `.key` / `.ca-bundle`).
 3. Keycloak NDK running on `:8483`.
 4. A DNS **A** record: host `talos` → `151.237.59.10`. Optional AdGuard rewrite → `10.20.30.40`.
-5. This git clone (or the tagged images after `v1.2.5` is pushed to **`kandacloud/talos`**).
+5. This git clone (or the tagged images after `v1.2.6` is pushed to **`kandacloud/talos`**).
 
 Port **3000 on the host** belongs to AdGuard. Production TALOS does not bind it.
 
@@ -81,7 +81,7 @@ docker compose -f docker-compose.prod.yaml --env-file .env.prod up --build -d
 docker compose -f docker-compose.prod.yaml ps
 ```
 
-First build on the N100 takes several minutes (Rust). After GitHub tag `v1.2.5` publishes **`kandacloud/talos:{ver}-web|storage|bunker`**, prefer:
+First build on the N100 takes several minutes (Rust). After GitHub tag `v1.2.6` publishes **`kandacloud/talos:{ver}-web|storage|bunker`**, prefer:
 
 ```bash
 docker compose -f docker-compose.prod.yaml --env-file .env.prod pull

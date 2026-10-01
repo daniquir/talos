@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-10-01
+
+Patch: Base64-looking passwords no longer corrupt on save; multi-value secrets (space-separated shares) reveal with per-value copy. Deploy **`kandacloud/talos:1.2.6-{web,storage,bunker}`** and bump `TALOS_VERSION=1.2.6`. Reload web UI (and extension package if you use the zip). Critical for Vault unseal keys stored in TALOS.
+
 ### Fixed
 - Bunker encrypt no longer base64-decodes plaintext. Passwords that are valid Base64 (Vault unseal keys, JWTs, etc.) were stored as binary and shown as UTF-8 replacement characters after decrypt. Decrypt still accepts base64-encoded `.gpg` bytes from storage.
 - Web secret viewer: multi-value passwords space-separated (e.g. several Vault unseal shares on one line) are listed with per-value copy again; quoted CSV still works. Passphrases with spaces are not split.
